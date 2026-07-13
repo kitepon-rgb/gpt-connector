@@ -130,6 +130,8 @@ export function readRuntimeErrorSnapshot(options: RuntimeErrorOptions & { readon
 }
 export function getRuntimeErrorDiagnostics(options: RuntimeErrorOptions = {}) {
   const enabled = isRuntimeErrorCollectionEnabled(options); if (!enabled) return diagnostics("disabled", "not_applicable", emptyStore());
+  const path = options.storePath ?? defaultRuntimeErrorStorePath(options.env);
+  if (runtimeErrorLockPresent(`${path}.lock`)) return diagnostics("enabled", "unavailable", emptyStore());
   try { return diagnostics("enabled", "ready", readStore(options, true)); } catch { return diagnostics("enabled", "unavailable", emptyStore()); }
 }
 
@@ -148,7 +150,30 @@ function updateStatus(store: Store, fingerprint: string, status: Status, options
 }
 function publicRecord(record: RecordEntry) { return { error_code: record.error_code, component: record.component, status: record.status, severity: record.severity, fingerprint: record.fingerprint, message_template: record.message_template, occurrence_count: record.count, first_seen: record.first_seen, last_seen: record.last_seen, state_schema_version: record.state_schema_version }; }
 function diagnostics(collection: "enabled" | "disabled", status: "ready" | "not_applicable" | "unavailable", store: Store) { return { schema: runtimeErrorStoreSchema, collection, status, high_watermark: store.next_sequence - 1, acknowledged_through: store.acknowledged_through, total_count: store.records.length, open_count: store.records.filter((r) => r.status === "open").length, pending_count: store.records.filter((r) => r.sequence > store.acknowledged_through).length }; }
-function mutate<T>(options: RuntimeErrorOptions, operation: (store: Store) => T, create = true): T { const path = options.storePath ?? defaultRuntimeErrorStorePath(options.env); if (create) ensurePrivateDirectory(dirname(path), options.env, options.windowsAcl); else assertPrivate(dirname(path), true, options.env, options.windowsAcl); const lock = `${path}.lock`; let fd: number | undefined; try { fd = fs.openSync(lock, "wx", 0o600); const store = readStore(options, create); const result = operation(store); writeStore(store, options); return result; } finally { if (fd !== undefined) { fs.closeSync(fd); rmSync(lock, { force: true }); } } }
+function mutate<T>(options: RuntimeErrorOptions, operation: (store: Store) => T, create = true): T { const path = options.storePath ?? defaultRuntimeErrorStorePath(options.env); if (create) ensurePrivateDirectory(dirname(path), options.env, options.windowsAcl); else assertPrivate(dirname(path), true, options.env, options.windowsAcl); const lock = `${path}.lock`; let fd: number | undefined; try { try { fd = fs.openSync(lock, "wx", 0o600); writeFileSync(fd, JSON.stringify({ pid: process.pid, created_at: new Date().toISOString() }), "utf8"); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST" || !recoverStaleLock(lock)) throw error; fd = fs.openSync(lock, "wx", 0o600); writeFileSync(fd, JSON.stringify({ pid: process.pid, created_at: new Date().toISOString() }), "utf8"); } const store = readStore(options, create); const result = operation(store); writeStore(store, options); return result; } finally { if (fd !== undefined) { fs.closeSync(fd); rmSync(lock, { force: true }); } } }
+function runtimeErrorLockPresent(lock: string): boolean {
+  try { lstatSync(lock); return true; } catch (error) { return (error as NodeJS.ErrnoException).code !== "ENOENT"; }
+}
+function recoverStaleLock(lock: string): boolean {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(lock, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+    const info = fs.fstatSync(fd);
+    if (!info.isFile() || Date.now() - info.mtimeMs < 5 * 60_000) return false;
+    const parsed = JSON.parse(readFileSync(fd, "utf8")) as { pid?: unknown };
+    if (!Number.isSafeInteger(parsed.pid) || (parsed.pid as number) < 1) return false;
+    try { process.kill(parsed.pid as number, 0); return false; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") return false; }
+    const current = lstatSync(lock);
+    if (!current.isFile() || current.isSymbolicLink()
+      || current.dev !== info.dev || current.ino !== info.ino
+      || current.mtimeMs !== info.mtimeMs || current.size !== info.size) return false;
+    fs.closeSync(fd); fd = undefined;
+    rmSync(lock);
+    return true;
+  } catch { return false; }
+  finally { if (fd !== undefined) fs.closeSync(fd); }
+}
 function mutateExistingOrEnabled<T>(options: RuntimeErrorOptions, operation: (store: Store) => T, disabled?: T): T {
   if (isRuntimeErrorCollectionEnabled(options)) return mutate(options, operation);
   const path = options.storePath ?? defaultRuntimeErrorStorePath(options.env);

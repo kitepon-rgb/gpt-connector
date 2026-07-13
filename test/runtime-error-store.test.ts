@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, renameSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, renameSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -113,4 +113,30 @@ test("runtime error storeはstate symlinkを拒否する", { skip: process.platf
   symlinkSync(target, box.storePath);
   assert.equal(getRuntimeErrorDiagnostics({ env: box.env }).status, "unavailable");
   assert.throws(() => readRuntimeErrorSnapshot({ env: box.env }));
+});
+
+test("stale lockは診断を偽greenにせず、死んだwriterだけを次のmutationで回収する", { skip: process.platform === "win32" }, () => {
+  const box = sandbox(); enable(box);
+  observeRuntimeError({ code: "CHAT_FAILED" }, { env: box.env });
+  const lockPath = `${box.storePath}.lock`;
+  writeFileSync(lockPath, JSON.stringify({ pid: 2_147_483_647, created_at: "2026-07-13T00:00:00.000Z" }), { mode: 0o600 });
+  const old = new Date(Date.now() - 10 * 60_000);
+  utimesSync(lockPath, old, old);
+
+  assert.equal(getRuntimeErrorDiagnostics({ env: box.env }).status, "unavailable");
+  assert.equal(observeRuntimeError({ code: "CDP_UNAVAILABLE" }, { env: box.env }).status, "recorded");
+  assert.equal(getRuntimeErrorDiagnostics({ env: box.env }).status, "ready");
+});
+
+test("生存writerのlockは古くても奪わず診断をunavailableにする", { skip: process.platform === "win32" }, () => {
+  const box = sandbox(); enable(box);
+  observeRuntimeError({ code: "CHAT_FAILED" }, { env: box.env });
+  const lockPath = `${box.storePath}.lock`;
+  writeFileSync(lockPath, JSON.stringify({ pid: process.pid, created_at: "2026-07-13T00:00:00.000Z" }), { mode: 0o600 });
+  const old = new Date(Date.now() - 10 * 60_000);
+  utimesSync(lockPath, old, old);
+
+  assert.equal(getRuntimeErrorDiagnostics({ env: box.env }).status, "unavailable");
+  assert.throws(() => observeRuntimeError({ code: "CDP_UNAVAILABLE" }, { env: box.env }), { code: "EEXIST" });
+  assert.equal(statSync(lockPath).isFile(), true);
 });

@@ -78,6 +78,10 @@ function writeJson(value: unknown): void {
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
+  if (argv.length === 0 || argv[0] === "--help" || argv[0] === "help") {
+    process.stdout.write("usage: gpt-connector --version | models | doctor | factory-diagnostics --json | chat --prompt <text> | consult --prompt <text> --slug <id> | sessions --slug <id> | close --session-id <uuid>\n");
+    return;
+  }
   if (argv[0] === "runtime-errors") {
     writeJson(runtimeErrors(argv.slice(1)));
     return;
