@@ -8,3 +8,5 @@
   持たない product-owned `runtime-errors` local aggregate を追加した。
 - runtime error の公開面は固定 code/template と SHA-256 fingerprint のみを使う。prompt、
   応答、添付、識別子、credential、CDP dump、絶対 path、raw error は保存・出力しない。
+- true headlessを使わず、専用profileのheadful Chromeを画面外で起動し、ChatGPT appの
+  読込完了まで待つ`gpt-connector browser start`を追加した。
