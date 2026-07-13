@@ -45,14 +45,10 @@ npm install --global gpt-connector
 ```
 
 専用Chromeを起動する。通常ChromeとOracle profileは使用しない。
+true headlessは使わず、専用profileのheadful Chromeを画面外へ固定する。コマンドはChatGPT appの読込完了まで待ってから成功を返す。
 
 ```bash
-open -na 'Google Chrome' --args \
-  --remote-debugging-port=9223 \
-  --user-data-dir="$HOME/.gpt-connector/browser-profile" \
-  --no-first-run \
-  --no-default-browser-check \
-  https://chatgpt.com/
+gpt-connector browser start
 ```
 
 初回だけ、開いた専用ChromeでChatGPTへ手動ログインする。connectorはpassword、cookie、tokenを読み出さない。

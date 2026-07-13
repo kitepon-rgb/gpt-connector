@@ -15,6 +15,7 @@ import {
   runtimeErrorStoreDiagnostic,
 } from "./runtime-error-store.js";
 import { packageVersion } from "./version.js";
+import { startBrowser } from "./browser-launcher.js";
 
 interface ParsedArgs {
   readonly command: string | undefined;
@@ -79,11 +80,16 @@ function writeJson(value: unknown): void {
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv.length === 0 || argv[0] === "--help" || argv[0] === "help") {
-    process.stdout.write("usage: gpt-connector --version | models | doctor | factory-diagnostics --json | chat --prompt <text> | consult --prompt <text> --slug <id> | sessions --slug <id> | close --session-id <uuid>\n");
+    process.stdout.write("usage: gpt-connector --version | browser start | models | doctor | factory-diagnostics --json | chat --prompt <text> | consult --prompt <text> --slug <id> | sessions --slug <id> | close --session-id <uuid>\n");
     return;
   }
   if (argv[0] === "runtime-errors") {
     writeJson(runtimeErrors(argv.slice(1)));
+    return;
+  }
+  if (argv[0] === "browser") {
+    if (argv.length !== 2 || argv[1] !== "start") throw new Error("usage: gpt-connector browser start");
+    writeJson(await startBrowser());
     return;
   }
   const { command, values } = parseArgs(argv);

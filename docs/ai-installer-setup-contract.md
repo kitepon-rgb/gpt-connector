@@ -45,12 +45,7 @@ gpt-connector doctor
 `reasonCode`が`cdp_unavailable`の場合だけ、次で専用Chromeを起動する。
 
 ```bash
-open -na 'Google Chrome' --args \
-  --remote-debugging-port=9223 \
-  --user-data-dir="$HOME/.gpt-connector/browser-profile" \
-  --no-first-run \
-  --no-default-browser-check \
-  https://chatgpt.com/
+gpt-connector browser start
 ```
 
 起動後に`gpt-connector doctor`を再実行する。`reasonCode`が`auth_required`なら、AI installerはここで停止し、開いた専用ChromeでChatGPTへログインするよう人間へ依頼する。ログイン完了の申告後、`doctor`を再実行する。
