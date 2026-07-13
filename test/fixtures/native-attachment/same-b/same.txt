@@ -1,0 +1,2 @@
+GPT_CONNECTOR_SAME_NAME_20260713_B
+同名添付の順序検証fixture

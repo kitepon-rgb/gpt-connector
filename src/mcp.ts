@@ -6,6 +6,7 @@ import { createGptConnectorMcpServer, LazyConnectorHost } from "./mcp-server.js"
 
 const host = new LazyConnectorHost(
   process.env.GPT_CONNECTOR_CDP_ENDPOINT ?? "http://127.0.0.1:9223",
+  process.env.GPT_CONNECTOR_STATE_DIR,
 );
 const server = createGptConnectorMcpServer(host);
 

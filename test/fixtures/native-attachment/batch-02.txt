@@ -1,0 +1,2 @@
+GPT_CONNECTOR_BATCH_ATTACHMENT_20260713_02
+この識別子だけを回答する検証fixture

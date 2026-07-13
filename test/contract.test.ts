@@ -1,0 +1,81 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+import {
+  consultInputSchema,
+  sessionsInputSchema,
+} from "../src/contract.js";
+import { packageVersion } from "../src/version.js";
+
+test("CLI/package公開versionをpackage.jsonと一致させる", async () => {
+  const packageJson = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  ) as { version?: unknown };
+  assert.equal(packageVersion, packageJson.version);
+});
+
+test("consult inputは既定値とslugを正規化する", () => {
+  assert.deepEqual(
+    consultInputSchema.parse({ prompt: "見解をください", slug: "review-001" }),
+    {
+      prompt: "見解をください",
+      slug: "review-001",
+      keepOpen: false,
+      dryRun: false,
+    },
+  );
+});
+
+test("consult inputは未知fieldと不正slugを拒否する", () => {
+  assert.throws(() =>
+    consultInputSchema.parse({ prompt: "x", slug: "Bad Slug", engine: "browser" }),
+  );
+  assert.throws(() => consultInputSchema.parse({ prompt: "x", slug: "ab" }));
+});
+
+test("filesにはabsolute workspaceRootが必要", () => {
+  assert.throws(() =>
+    consultInputSchema.parse({ prompt: "x", slug: "files-001", files: ["a.md"] }),
+  );
+  assert.throws(() =>
+    consultInputSchema.parse({
+      prompt: "x",
+      slug: "files-001",
+      files: ["a.md"],
+      workspaceRoot: "relative/root",
+    }),
+  );
+
+  const parsed = consultInputSchema.parse({
+    prompt: "x",
+    slug: "files-001",
+    files: ["a.md"],
+    workspaceRoot: "/workspace",
+  });
+  assert.deepEqual(parsed.files, ["a.md"]);
+  assert.equal(parsed.workspaceRoot, "/workspace");
+});
+
+test("effort指定時はmodelを必須にする", () => {
+  assert.throws(() =>
+    consultInputSchema.parse({ prompt: "x", slug: "effort-001", effort: "extended" }),
+  );
+  assert.equal(
+    consultInputSchema.parse({
+      prompt: "x",
+      slug: "effort-001",
+      model: "gpt-5-6-thinking",
+      effort: "extended",
+    }).effort,
+    "extended",
+  );
+});
+
+test("sessions inputはexact slugだけを受ける", () => {
+  assert.deepEqual(sessionsInputSchema.parse({ slug: "review-001" }), {
+    slug: "review-001",
+  });
+  assert.throws(() => sessionsInputSchema.parse({}));
+  assert.throws(() => sessionsInputSchema.parse({ slug: "review-001", list: true }));
+});

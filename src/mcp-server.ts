@@ -2,12 +2,24 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { GptConnector } from "./connector.js";
-import type { ChatInput, CloseInput } from "./contract.js";
+import {
+  consultInputSchema,
+  sessionsInputSchema,
+  type ChatInput,
+  type CloseInput,
+  type ConsultInput,
+  type SessionsInput,
+} from "./contract.js";
+import { ConsultJobStore } from "./consult-job-store.js";
 import { ConnectorError } from "./errors.js";
+import { packageVersion } from "./version.js";
 
 interface ConnectorPort {
   models(): ReturnType<GptConnector["models"]>;
+  diagnostics(): ReturnType<GptConnector["diagnostics"]>;
   chat(input: ChatInput): ReturnType<GptConnector["chat"]>;
+  consult(input: ConsultInput): ReturnType<GptConnector["consult"]>;
+  sessions(input: SessionsInput): ReturnType<GptConnector["sessions"]>;
   closeSession(input: CloseInput): ReturnType<GptConnector["closeSession"]>;
   close(): void;
   shutdown(): Promise<void>;
@@ -15,14 +27,19 @@ interface ConnectorPort {
 
 export class LazyConnectorHost {
   readonly #endpoint: string;
+  readonly #stateDirectory: string | undefined;
   #connectorPromise: Promise<ConnectorPort> | null = null;
 
-  constructor(endpoint = "http://127.0.0.1:9223") {
+  constructor(endpoint = "http://127.0.0.1:9223", stateDirectory?: string) {
     this.#endpoint = endpoint;
+    this.#stateDirectory = stateDirectory;
   }
 
   get(): Promise<ConnectorPort> {
-    this.#connectorPromise ??= GptConnector.connect({ endpoint: this.#endpoint }).catch((error) => {
+    this.#connectorPromise ??= GptConnector.connect({
+      endpoint: this.#endpoint,
+      stateDirectory: this.#stateDirectory,
+    }).catch((error) => {
       this.#connectorPromise = null;
       throw error;
     });
@@ -39,16 +56,41 @@ export class LazyConnectorHost {
       this.#connectorPromise = null;
     }
   }
+
+  async sessions(input: SessionsInput): Promise<ReturnType<GptConnector["sessions"]>> {
+    if (this.#connectorPromise !== null) {
+      return (await this.#connectorPromise).sessions(input);
+    }
+    const store = new ConsultJobStore({
+      stateDirectory: this.#stateDirectory,
+      readOnly: true,
+    });
+    await store.initialize();
+    try {
+      return store.get(sessionsInputSchema.parse(input).slug);
+    } finally {
+      store.close();
+    }
+  }
 }
 
-export const mcpToolNames = ["chatgpt_models", "chatgpt_chat", "chatgpt_close"] as const;
+export const mcpToolNames = [
+  "chatgpt_models",
+  "chatgpt_chat",
+  "chatgpt_close",
+  "consult",
+  "sessions",
+  "diagnostics",
+] as const;
+
+export const mcpServerVersion = packageVersion;
 
 export function createGptConnectorMcpServer(host: LazyConnectorHost): McpServer {
   const server = new McpServer(
-    { name: "gpt-connector", version: "0.1.0" },
+    { name: "gpt-connector", version: mcpServerVersion },
     {
       instructions:
-        "通常Chatを呼ぶ前に必要ならchatgpt_modelsでlive model/effortを確認する。継続時はchatgpt_chatが返すsessionIdを渡し、終了時はchatgpt_closeでarchiveする。",
+        "second opinionはconsultへcaller既知slugと必要ならworkspaceRoot/filesを渡す。caller timeout後は再送せずsessionsで同じslugを確認する。live model/effortはchatgpt_models、既存互換chatはchatgpt_chat、終了はchatgpt_closeを使う。",
     },
   );
 
@@ -89,6 +131,52 @@ export function createGptConnectorMcpServer(host: LazyConnectorHost): McpServer 
       },
     },
     async (input) => toolResult(async () => (await host.get()).chat(input)),
+  );
+
+  server.registerTool(
+    "consult",
+    {
+      title: "通常Chatへ相談",
+      description:
+        "ChatGPT公式Web runtimeへ相談する。filesはworkspaceRoot相対で正規添付し、slugで冪等化する。",
+      inputSchema: consultInputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
+    },
+    async (input) => toolResult(async () => (await host.get()).consult(input)),
+  );
+
+  server.registerTool(
+    "sessions",
+    {
+      title: "相談状態を回収",
+      description: "既知slug 1件の状態・terminal result・errorを返し、再送は行わない。",
+      inputSchema: sessionsInputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
+    },
+    async (input) => toolResult(async () => host.sessions(input)),
+  );
+
+  server.registerTool(
+    "diagnostics",
+    {
+      title: "connector診断",
+      description: "会話やuploadを作らず、接続・bridge・job/session件数だけを返す。",
+      inputSchema: z.object({}).strict(),
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
+    },
+    async () => toolResult(async () => (await host.get()).diagnostics()),
   );
 
   server.registerTool(

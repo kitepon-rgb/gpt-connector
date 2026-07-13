@@ -1,0 +1,4 @@
+GPT_CONNECTOR_NATIVE_ATTACHMENT_PROBE_20260713_TXT
+
+このファイルは、ChatGPTの正規添付経路を検証するための無害なfixtureです。
+検証時は先頭の識別子だけを回答させます。
