@@ -3,7 +3,7 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["dist/**", ".browser-profile/**", "rag/**"],
+    ignores: ["dist/**", ".browser-profile/**", ".gpt-connector-tmp/**", "rag/**"],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
