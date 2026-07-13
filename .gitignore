@@ -1,0 +1,5 @@
+/.browser-profile/
+/dist/
+/node_modules/
+/.gpt-connector-tmp/
+*.log

@@ -1,0 +1,62 @@
+{
+  "name": "gpt-connector",
+  "version": "0.1.0",
+  "description": "UIに依存せず、ログイン済みChatGPT Web runtimeの通常ChatをCodexから呼び出すローカルconnector",
+  "license": "MIT",
+  "author": "kitepon-rgb",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kitepon-rgb/gpt-connector.git"
+  },
+  "homepage": "https://github.com/kitepon-rgb/gpt-connector#readme",
+  "bugs": {
+    "url": "https://github.com/kitepon-rgb/gpt-connector/issues"
+  },
+  "type": "module",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    }
+  },
+  "files": [
+    "dist/src",
+    "README.md",
+    "LICENSE"
+  ],
+  "bin": {
+    "gpt-connector": "dist/src/cli.js",
+    "gpt-connector-mcp": "dist/src/mcp.js"
+  },
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "cli": "tsx src/cli.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "tsx --test test/*.test.ts",
+    "check": "pnpm lint && pnpm typecheck && pnpm test",
+    "prepublishOnly": "pnpm check && pnpm build"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "ws": "8.21.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "26.1.1",
+    "@types/ws": "8.18.1",
+    "eslint": "10.7.0",
+    "tsx": "4.23.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.63.0"
+  }
+}
