@@ -23,3 +23,9 @@ test("引数なしもCDP接続前にusageを表示する", () => {
   assert.match(result.stdout, /^usage: gpt-connector/u);
   assert.doesNotMatch(`${result.stdout}${result.stderr}`, /CDP_UNAVAILABLE/u);
 });
+
+test("helpはbrowser showを案内する", () => {
+  const result = runCli("--help");
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /browser <start\|show>/u);
+});

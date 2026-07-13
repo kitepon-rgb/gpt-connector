@@ -8,5 +8,10 @@
   持たない product-owned `runtime-errors` local aggregate を追加した。
 - runtime error の公開面は固定 code/template と SHA-256 fingerprint のみを使う。prompt、
   応答、添付、識別子、credential、CDP dump、絶対 path、raw error は保存・出力しない。
-- true headlessを使わず、専用profileのheadful Chromeを画面外で起動し、ChatGPT appの
-  読込完了まで待つ`gpt-connector browser start`を追加した。
+- true headlessを使わず、cold startでは窓なしで専用profileのheadful Chromeを起動し、CDPで
+  ChatGPT targetを最初から最小化状態で作成・確認してからapp readyを待つ`gpt-connector browser start`
+  を追加した。既存endpointもapp probeより先に最小化する。現行macOS実測では最小化中も送受信を維持する。
+- `gpt-connector browser show`で、正規専用profileの一意ChatGPT windowだけを明示的に表示へ戻せるようにした。認証要求時はstartが同じwindowを表示へ戻してから`AUTH_REQUIRED`を返す。
+- window stateのCDP read-backを有界pollにし、非同期遷移直後の旧stateによるfalse failureを防いだ。
+- cold startはhidden Chrome・background minimized targetから開始し、最小化確認後に正規PIDだけをunhideしてからprobeする。
+- showはCDP stateのstale値に依存せず`Page.bringToFront`を送る。最終状態はWindowServerの正規PID/layer 0 window数で確認する。

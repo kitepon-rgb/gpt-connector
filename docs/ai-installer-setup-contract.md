@@ -50,6 +50,16 @@ gpt-connector browser start
 
 起動後に`gpt-connector doctor`を再実行する。`reasonCode`が`auth_required`なら、AI installerはここで停止し、開いた専用ChromeでChatGPTへログインするよう人間へ依頼する。ログイン完了の申告後、`doctor`を再実行する。
 
+`browser start`はcold startでは窓なしChromeのCDP browser endpointからChatGPT targetを最初から最小化状態で作成・確認してからapp readyを待つ。既存endpointではapp ready probeより先に専用ChatGPT windowを最小化する。現行macOS実測では最小化中も送受信を維持する。target作成、最小化または確認に失敗した場合、AI installerは成功扱いせず停止する。
+
+`browser start`の成功返却時点では専用ChatGPT windowは最小化済みである。`AUTH_REQUIRED`時だけ同じ専用windowを表示へ戻してから停止する。人間が手動で表示へ戻す必要がある場合は`gpt-connector browser show`を使う。Chrome更新時はrelease smokeとして`browser start`、`models`、最小化中の`chat`、必要時の`browser show`を確認する。
+
+window stateのread-backは非同期遷移の収束を有界時間待機して確認する。単発read-backが遷移前stateを返しただけでは失敗にしない。
+
+show後もChrome CDPが`minimized`を返す場合があるため、showは`Page.bringToFront`を送り、最終状態を正規PIDのWindowServer layer 0 on-screen window数で確認する。start成功時は0、show成功時は1件以上である。
+
+Chromeのhiddenはflashを覆うcold準備状態だけであり、最小化確認後は正規PIDだけをunhideしてからprobeする。hiddenのまま運用せず、Oracleのhide fallbackではない。
+
 AI installerはpassword、cookie、tokenを要求・取得・表示・保存しない。ログインformの入力や認証challengeの突破を自動化しない。
 
 ### 4. Codex MCP設定
@@ -101,7 +111,7 @@ consumerが明示的に別のstate directoryを必要とする場合だけ、pro
 | reasonCode | AI installerの処理 |
 | --- | --- |
 | `ready` | Chromeを再起動せず、未完了の設定だけを進める。 |
-| `cdp_unavailable` | 専用Chromeを起動する。起動済みならendpointとChatGPT tabを確認し、ChatGPT page targetは1つにする。 |
+| `cdp_unavailable` | 専用Chromeを起動する。cold startでは窓なしChromeのbrowser CDPから最小化済みChatGPT targetを作成し、起動済みならapp probe前に既存ChatGPT windowを最小化する。ChatGPT page targetは1つにする。 |
 | `auth_required` | 人間へ専用Chromeでの手動ログインを依頼し、完了申告まで停止する。 |
 | `runtime_drift` | 非公開runtimeの互換性喪失として停止し、更新または製品側修正が必要と報告する。別方式へfallbackしない。 |
 | `state_unavailable` | state directoryのpath、所有者、permissionを報告して停止する。台帳を無断削除しない。 |

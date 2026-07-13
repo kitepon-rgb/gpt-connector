@@ -115,6 +115,10 @@ const pageDiagnosticsSchema = z.object({
 
 export interface ConnectorOptions {
   readonly endpoint?: string;
+  /** 有界なread-only readiness probeだけが差し替える内部transport。 */
+  readonly fetch?: typeof globalThis.fetch;
+  /** CDP handshake/callのtimeout。省略時は通常connectorの既定値を維持する。 */
+  readonly cdpTimeoutMs?: number;
   readonly operationTimeoutMs?: number;
   readonly pollIntervalMs?: number;
   readonly stateDirectory?: string;
@@ -144,8 +148,8 @@ export class GptConnector {
 
   static async connect(options: ConnectorOptions = {}): Promise<GptConnector> {
     const endpoint = options.endpoint ?? "http://127.0.0.1:9223";
-    const target = await discoverChatGptTarget(endpoint);
-    const client = await CdpClient.connect(target.webSocketDebuggerUrl);
+    const target = await discoverChatGptTarget(endpoint, options.fetch);
+    const client = await CdpClient.connect(target.webSocketDebuggerUrl, options.cdpTimeoutMs);
     const connector = new GptConnector(client, options);
 
     try {

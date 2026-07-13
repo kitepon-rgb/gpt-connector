@@ -45,7 +45,22 @@ npm install --global gpt-connector
 ```
 
 専用Chromeを起動する。通常ChromeとOracle profileは使用しない。
-true headlessは使わず、専用profileのheadful Chromeを画面外へ固定する。コマンドはChatGPT appの読込完了まで待ってから成功を返す。
+true headlessは使わず、cold startでは窓なしで専用profileのheadful Chromeを起動する。CDP browser endpointからChatGPT targetを最初から最小化状態で作成し、最小化を確認してからapp readyを待つ。既存endpointではapp probeより先に専用ChatGPT windowを最小化する。現行macOS実測では最小化中も送受信を維持する。
+
+Chromeのhidden状態はflashを覆うcold準備中だけに使い、最小化確認後は正規PIDだけをunhideしてからprobeする。hiddenのまま運用せず、Oracleのhide fallbackでもない。
+
+`browser start`が成功を返す時点では専用ChatGPT windowは最小化済みである。認証が必要になった場合だけwindowを表示へ戻す。手動でログイン／確認するには次を使う。
+
+window stateのCDP read-backは遷移直後の旧stateを単発判定せず、有界時間内に期待stateへ収束したことを確認する。
+
+ChromeのCDPはshow後も最小化状態を返すことがあるため、表示／非表示の最終判定は正規PIDのWindowServer layer 0 window数で行う。start成功時は0、show成功時は1件以上である。
+実機では同時cold startが`started` 1件／`already_ready` 1件へ収束し、新規専用Chrome PIDで15秒・10ms監視中のlayer 0 on-screen最大値は0だった。`models`とchat（`ACCEPTED_NO_FLASH_OK`）の後も0を維持し、show→startは0→1→0を確認した。
+
+```bash
+gpt-connector browser show
+```
+
+Chrome更新時はrelease smokeとして`browser start`、`models`、最小化中の`chat`、必要時の`browser show`を確認する。
 
 ```bash
 gpt-connector browser start

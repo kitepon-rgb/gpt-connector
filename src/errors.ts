@@ -34,8 +34,9 @@ export class ConnectorError extends Error {
     code: ConnectorErrorCode,
     message: string,
     details?: Readonly<Record<string, string | number | boolean | null>>,
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
     this.name = "ConnectorError";
     this.code = code;
     this.details = details;
