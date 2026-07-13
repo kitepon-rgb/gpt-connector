@@ -10,6 +10,7 @@ export const factoryDiagnosticsSchema = "gpt-connector.factory-diagnostics.v1" a
 export interface FactoryDiagnosticsOptions {
   readonly endpoint?: string;
   readonly stateDirectory?: string;
+  readonly platform?: NodeJS.Platform;
 }
 
 type CheckStatus = "ready" | "not_ready" | "unsupported" | "unverified";
@@ -23,7 +24,7 @@ interface RuntimeProbe {
 
 /** Read-only product readiness. It never invokes models/chat/consult, upload, archive, or job creation. */
 export async function factoryDiagnostics(options: FactoryDiagnosticsOptions = {}) {
-  if (process.platform === "win32") return factoryResult("unsupported", [
+  if ((options.platform ?? process.platform) !== "darwin") return factoryResult("unsupported", [
     check("version", "ready", "package_version_available"),
     check("state_schema", "ready", "consult_jobs_json_v1"),
     check("job_schema", "ready", "consult_job_v1"),

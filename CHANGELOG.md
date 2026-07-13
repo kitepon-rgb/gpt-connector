@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1 — 2026-07-14
+
+- live browser launcherがmacOS専用である契約に合わせ、LinuxとWindowsのfactory diagnosticsを
+  CDP不備の`not_ready`ではなく`unsupported`として報告するよう修正した。
+
 ## 0.3.0 — 2026-07-14
 
 - BugHub factory向けに `gpt-connector factory-diagnostics --json` を追加した。既存
