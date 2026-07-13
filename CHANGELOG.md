@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-07-14
 
 - BugHub factory向けに `gpt-connector factory-diagnostics --json` を追加した。既存
   `gpt-connector.diagnostics.v1` の `doctor` 契約は維持する。
