@@ -136,3 +136,14 @@ status／同slug reserveの台帳再読込、最後の非terminal jobまでのle
 - CLI: `0.2.0`。
 - doctor: ready、session／operation／upload／buffered bytes／job 0。
 - stdio MCP: `chatgpt_models`、`chatgpt_chat`、`chatgpt_close`、`consult`、`sessions`、`diagnostics`の6 tools。
+
+## 0.2.0公開結果
+
+- npm public publish: 成功、`latest=0.2.0`。
+- registry shasum／integrity: 検証tarballと完全一致。
+- 初回publish: 隔離展開物をESLintが走査し、prepublishで42 errors。公開前停止とregistry未公開を確認。
+- 根本修正: `.gpt-connector-tmp/**`をESLint ignoreへ追加し、展開物を残したまま62 tests／lint／typecheck／buildを通して再publish。
+- global install: `/opt/homebrew/bin/gpt-connector`、version `0.2.0`。
+- global doctor: ready、bridge／job count 0。
+- global stdio MCP: 6 tools。
+- global consult dry-run: known text、PNG、unknown extensionのMIME／bytes／SHA-256一致、upload／conversation未実行。
