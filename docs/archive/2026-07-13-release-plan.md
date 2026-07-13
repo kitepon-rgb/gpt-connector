@@ -25,7 +25,14 @@
 - [x] `gpt-connector@0.1.0`をnpmへpublic publishする。dist-tagは`latest`。
 - [x] npm registryの公開metadataと45ファイルのtarball内容をread-backする。
 - [x] 公開版をnpm global installし、CLIのlive model取得とMCP 3 tools列挙を確認する。
-- [ ] リリース計画を完了裁定して`docs/archive/`へ移す。
+- [x] リリース計画を完了裁定して`docs/archive/`へ移す。
+
+## 完了結果
+
+- GitHub public repositoryの`main`へ初期実装と公開実績をpushした。
+- npm registryで`gpt-connector@0.1.0`、dist-tag `latest`、MIT、45ファイルのtarballをread-backした。
+- npm global installした公開版でlive model catalogとMCP 3 toolsを確認した。
+- コード・公開物・文書の最終gateはgreen。
 
 ## 停止条件
 
