@@ -118,6 +118,8 @@ export interface ConnectorOptions {
   readonly operationTimeoutMs?: number;
   readonly pollIntervalMs?: number;
   readonly stateDirectory?: string;
+  /** Read-only diagnostics may inspect an existing job store but must never create or recover it. */
+  readonly readOnlyJobs?: boolean;
 }
 
 interface AuthProbe {
@@ -135,7 +137,7 @@ export class GptConnector {
 
   private constructor(client: CdpClient, options: ConnectorOptions) {
     this.#client = client;
-    this.#jobs = new ConsultJobStore({ stateDirectory: options.stateDirectory });
+    this.#jobs = new ConsultJobStore({ stateDirectory: options.stateDirectory, readOnly: options.readOnlyJobs });
     this.#operationTimeoutMs = options.operationTimeoutMs ?? 180_000;
     this.#pollIntervalMs = options.pollIntervalMs ?? 250;
   }

@@ -31,7 +31,7 @@ test("CDP endpointをloopbackへ限定する", () => {
   assert.equal(validateCdpEndpoint("http://127.0.0.1:9223").port, "9223");
   assert.throws(
     () => validateCdpEndpoint("http://example.com:9223"),
-    (error) => error instanceof ConnectorError && error.code === "CDP_UNAVAILABLE",
+    (error) => error instanceof ConnectorError && error.code === "INVALID_INPUT",
   );
 });
 

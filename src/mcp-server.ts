@@ -12,6 +12,7 @@ import {
 } from "./contract.js";
 import { ConsultJobStore } from "./consult-job-store.js";
 import { ConnectorError } from "./errors.js";
+import { recordRuntimeErrorBestEffort, runtimeErrorStoreDiagnostic } from "./runtime-error-store.js";
 import { packageVersion } from "./version.js";
 
 interface ConnectorPort {
@@ -206,6 +207,8 @@ async function toolResult(action: () => Promise<unknown>) {
         typeof result === "object" && result !== null ? { ...result } : { value: result },
     };
   } catch (error) {
+    const telemetry = error instanceof ConnectorError ? recordRuntimeErrorBestEffort(error.code) : "disabled";
+    if (telemetry === "store_unavailable") process.stderr.write(runtimeErrorStoreDiagnostic);
     const body =
       error instanceof ConnectorError
         ? { code: error.code, message: error.message }

@@ -52,18 +52,18 @@ export function validateCdpEndpoint(endpoint: string): URL {
   try {
     url = new URL(endpoint);
   } catch {
-    throw new ConnectorError("CDP_UNAVAILABLE", "CDP endpointがURLではありません。");
+    throw new ConnectorError("INVALID_INPUT", "CDP endpointがURLではありません。");
   }
 
   if (url.protocol !== "http:" || !loopbackHosts.has(url.hostname)) {
     throw new ConnectorError(
-      "CDP_UNAVAILABLE",
+      "INVALID_INPUT",
       "CDP endpointはloopback HTTPだけを利用できます。",
     );
   }
 
   if (url.username !== "" || url.password !== "" || url.pathname !== "/") {
-    throw new ConnectorError("CDP_UNAVAILABLE", "CDP endpointの形式が不正です。");
+    throw new ConnectorError("INVALID_INPUT", "CDP endpointの形式が不正です。");
   }
 
   return url;

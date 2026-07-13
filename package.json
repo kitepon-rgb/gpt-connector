@@ -24,6 +24,7 @@
   "files": [
     "dist/src",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE",
     "docs/ai-installer-setup-contract.md"
   ],
@@ -32,7 +33,7 @@
     "gpt-connector-mcp": "dist/src/mcp.js"
   },
   "engines": {
-    "node": ">=26"
+    "node": ">=22"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

@@ -3,6 +3,17 @@
 import { GptConnector } from "./connector.js";
 import { ConsultJobStore } from "./consult-job-store.js";
 import { ConnectorError } from "./errors.js";
+import { factoryDiagnostics } from "./factory-diagnostics.js";
+import {
+  acknowledgeRuntimeErrors,
+  compactRuntimeErrors,
+  getRuntimeErrorDiagnostics,
+  readRuntimeErrorSnapshot,
+  reopenRuntimeError,
+  recordRuntimeErrorBestEffort,
+  resolveRuntimeError,
+  runtimeErrorStoreDiagnostic,
+} from "./runtime-error-store.js";
 import { packageVersion } from "./version.js";
 
 interface ParsedArgs {
@@ -66,7 +77,12 @@ function writeJson(value: unknown): void {
 }
 
 async function main(): Promise<void> {
-  const { command, values } = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  if (argv[0] === "runtime-errors") {
+    writeJson(runtimeErrors(argv.slice(1)));
+    return;
+  }
+  const { command, values } = parseArgs(argv);
   if (command === "--version" || command === "version") {
     process.stdout.write(`${packageVersion}\n`);
     return;
@@ -75,6 +91,15 @@ async function main(): Promise<void> {
   const endpoint = stringArg(values, "endpoint") ?? "http://127.0.0.1:9223";
   const stateDirectory = stringArg(values, "state-directory") ??
     process.env.GPT_CONNECTOR_STATE_DIR;
+  if (command === "factory-diagnostics") {
+    if (!flagArg(values, "json") || values.size !== 1) {
+      throw new Error("usage: gpt-connector factory-diagnostics --json");
+    }
+    const diagnostics = await factoryDiagnostics({ endpoint, stateDirectory });
+    writeJson(diagnostics);
+    if (diagnostics.overall !== "ready") process.exitCode = 1;
+    return;
+  }
   if (command === "sessions") {
     const slug = stringArg(values, "slug");
     if (slug === undefined) throw new Error("sessionsには--slugが必要です。");
@@ -148,11 +173,44 @@ async function main(): Promise<void> {
   }
 }
 
+function runtimeErrors(argv: readonly string[]): unknown {
+  const [command, ...rest] = argv;
+  if (command === undefined || !["snapshot", "diagnostics", "ack", "resolve", "reopen", "compact"].includes(command)) {
+    throw new Error("usage: gpt-connector runtime-errors <snapshot|diagnostics|ack|resolve|reopen|compact> [arguments] --json");
+  }
+  let json = false;
+  let afterCursor = 0;
+  let limit = 256;
+  let value: string | undefined;
+  for (let index = 0; index < rest.length; index += 1) {
+    const current = rest[index]!;
+    if (current === "--json" && !json) { json = true; continue; }
+    if (command === "snapshot" && (current === "--after-cursor" || current === "--limit")) {
+      const next = rest[++index];
+      if (next === undefined || !/^\d+$/u.test(next)) throw new Error("runtime-errors cursor/limitが不正です。");
+      if (current === "--after-cursor") afterCursor = Number(next); else limit = Number(next);
+      continue;
+    }
+    if (["ack", "resolve", "reopen"].includes(command) && value === undefined) { value = current; continue; }
+    throw new Error("runtime-errorsの引数が不正です。");
+  }
+  if (!json) throw new Error("runtime-errorsには--jsonが必要です。");
+  if (command === "snapshot") return readRuntimeErrorSnapshot({ afterCursor, limit });
+  if (command === "diagnostics") return getRuntimeErrorDiagnostics();
+  if (command === "compact") return compactRuntimeErrors();
+  if (value === undefined) throw new Error("runtime-errorsの値が必要です。");
+  if (command === "ack") return acknowledgeRuntimeErrors(Number(value));
+  if (command === "resolve") return resolveRuntimeError(value);
+  return reopenRuntimeError(value);
+}
+
 main().catch((error: unknown) => {
+  const telemetry = error instanceof ConnectorError ? recordRuntimeErrorBestEffort(error.code) : "disabled";
+  if (telemetry === "store_unavailable") process.stderr.write(runtimeErrorStoreDiagnostic);
   if (error instanceof ConnectorError) {
     process.stderr.write(`${JSON.stringify({ code: error.code, message: error.message })}\n`);
   } else {
-    process.stderr.write(`${JSON.stringify({ code: "INVALID_INPUT", message: String(error) })}\n`);
+    process.stderr.write(`${JSON.stringify({ code: "INVALID_INPUT", message: "CLI commandを実行できませんでした。" })}\n`);
   }
   process.exitCode = 1;
 });
