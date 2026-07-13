@@ -20,11 +20,11 @@
 - [x] `files` allowlistで公開物を`dist/src`、README、LICENSEへ限定する。
 - [x] lint、typecheck、test、build、`npm pack --dry-run`を通す。
 - [x] GitHub public repositoryを作成して`origin`を設定する。
-- [ ] 対象pathを明示して初回commitする。
-- [ ] `main`をpushしてupstreamを設定する。
-- [ ] `gpt-connector@0.1.0`をnpmへpublic publishする。
-- [ ] npm registryの公開metadataとtarball内容をread-backする。
-- [ ] 公開版をnpm global installし、2つのbinを確認する。
+- [x] 対象pathを明示して初回commitする。commit: `97b1884`。
+- [x] `main`をpushしてupstreamを設定する。GitHub read-backも同一commitを確認した。
+- [x] `gpt-connector@0.1.0`をnpmへpublic publishする。dist-tagは`latest`。
+- [x] npm registryの公開metadataと45ファイルのtarball内容をread-backする。
+- [x] 公開版をnpm global installし、CLIのlive model取得とMCP 3 tools列挙を確認する。
 - [ ] リリース計画を完了裁定して`docs/archive/`へ移す。
 
 ## 停止条件
