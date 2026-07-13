@@ -57,6 +57,10 @@ open -na 'Google Chrome' --args \
 
 初回だけ、開いた専用ChromeでChatGPTへ手動ログインする。connectorはpassword、cookie、tokenを読み出さない。
 
+### AI installer向けセットアップ
+
+CodexなどのAIが導入する場合は、[AI installer向けセットアップ契約](docs/ai-installer-setup-contract.md)に従う。AIはinstall、専用Chrome起動、read-only診断、MCP設定を担当し、人間には専用ChromeでのChatGPTログインだけを依頼する。通常ChromeやOracleのprofile、認証情報は使用しない。
+
 ## source setup
 
 ```bash
