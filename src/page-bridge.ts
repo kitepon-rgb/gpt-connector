@@ -106,6 +106,7 @@ const bridgeBootstrapSource = String.raw`async function(coreUrl, conversationUrl
   const sessions = new Map();
   const operations = new Map();
   const uploads = new Map();
+  const downloads = new Map();
   const terminal = new Set(["succeeded", "failed"]);
 
   const knownErrorCodes = new Set([
@@ -113,12 +114,17 @@ const bridgeBootstrapSource = String.raw`async function(coreUrl, conversationUrl
     "RUNTIME_DRIFT",
     "MODEL_NOT_AVAILABLE",
     "EFFORT_NOT_SUPPORTED",
+    "MODEL_RESOLUTION_MISMATCH",
     "FILE_TYPE_NOT_SUPPORTED",
     "FILE_EMPTY",
     "FILE_LIMIT_EXCEEDED",
     "UPLOAD_FAILED",
     "UPLOAD_TIMEOUT",
     "ATTACHMENT_READBACK_FAILED",
+    "IMAGE_NOT_GENERATED",
+    "IMAGE_READBACK_FAILED",
+    "IMAGE_DOWNLOAD_FAILED",
+    "IMAGE_CLEANUP_FAILED",
     "CHAT_FAILED",
     "STREAM_INCOMPLETE",
     "SESSION_NOT_FOUND",
@@ -145,6 +151,12 @@ const bridgeBootstrapSource = String.raw`async function(coreUrl, conversationUrl
   const clearChunks = (upload) => {
     for (const chunk of upload?.chunks ?? []) chunk.fill(0);
     if (upload) upload.chunks = [];
+  };
+
+  const clearDownload = (handle) => {
+    const download = downloads.get(handle);
+    download?.content?.fill(0);
+    return downloads.delete(handle);
   };
 
   const serverIdOf = (conversation) => {
@@ -267,13 +279,152 @@ const bridgeBootstrapSource = String.raw`async function(coreUrl, conversationUrl
     };
   };
 
-  const extractResult = (conversation) => {
+  const readBackGeneratedImages = async (conversation) => {
+    const serverId = serverIdOf(conversation);
+    if (!serverId) throw new Error("IMAGE_READBACK_FAILED:no_server_id");
+    let terminal = null;
+    let turnExchangeId = null;
+    let workingTurnId = null;
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const thread = threadGetter(conversation.id);
+      terminal = treeApi.getLastAssistantMessage(thread);
+      turnExchangeId = terminal?.metadata?.turn_exchange_id ?? null;
+      workingTurnId = terminal?.metadata?.working_turn_id ?? null;
+      if (
+        terminal?.author?.role === "assistant" &&
+        terminal?.status === "finished_successfully" &&
+        terminal?.end_turn === true &&
+        typeof turnExchangeId === "string" &&
+        typeof workingTurnId === "string"
+      ) break;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    if (
+      terminal?.author?.role !== "assistant" ||
+      terminal?.status !== "finished_successfully" ||
+      terminal?.end_turn !== true ||
+      typeof turnExchangeId !== "string" ||
+      typeof workingTurnId !== "string"
+    ) throw new Error("IMAGE_READBACK_FAILED:terminal_turn_mismatch");
+
+    let data = null;
+    let mapping = {};
+    let turnMessages = [];
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      data = await apiClient.safeGet("/conversation/{conversation_id}", {
+        parameters: { path: { conversation_id: serverId } }
+      });
+      mapping = data?.mapping ?? {};
+      turnMessages = Object.values(mapping)
+        .map((node) => node?.message)
+        .filter((message) =>
+          message?.metadata?.turn_exchange_id === turnExchangeId &&
+          message?.metadata?.working_turn_id === workingTurnId &&
+          typeof message?.id === "string"
+        );
+      const hasImageToolMessage = turnMessages.some((message) =>
+        message?.author?.role === "tool" &&
+        (Array.isArray(message?.content?.parts) ? message.content.parts : [])
+          .some((part) => part?.content_type === "image_asset_pointer")
+      );
+      if (hasImageToolMessage) break;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    const turnMessageIds = turnMessages.map((message) => message.id);
+    if (turnMessageIds.length === 0) throw new Error("IMAGE_READBACK_FAILED:turn_message_set_empty");
+    const turnMessageIdSet = new Set(turnMessageIds);
+
+    let matches = [];
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const library = await apiClient.safeGet("/files/library/nodes", {
+        parameters: { query: { include_hidden_files: true } }
+      });
+      matches = (library?.items ?? []).filter((item) =>
+        item?.origination_thread_id === serverId &&
+        turnMessageIdSet.has(item?.origination_message_id) &&
+        typeof item?.id === "string" &&
+        typeof item?.file_id === "string" &&
+        typeof item?.mime_type === "string" &&
+        item.mime_type.startsWith("image/") &&
+        Number.isSafeInteger(item?.file_size_bytes) &&
+        item.file_size_bytes > 0
+      );
+      if (matches.length > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    if (matches.length === 0) throw new Error("IMAGE_NOT_GENERATED:no_correlated_library_image");
+
+    matches.sort((left, right) =>
+      turnMessageIds.indexOf(right.origination_message_id) -
+      turnMessageIds.indexOf(left.origination_message_id)
+    );
+    const results = [];
+    try {
+      for (const item of matches) {
+        const origin = Object.values(mapping)
+          .map((node) => node?.message)
+          .find((message) => message?.id === item.origination_message_id);
+        const imageParts = (Array.isArray(origin?.content?.parts) ? origin.content.parts : [])
+          .filter((part) => part?.content_type === "image_asset_pointer");
+        const part = imageParts.find((candidate) =>
+          candidate?.mime_type === item.mime_type &&
+          candidate?.size_bytes === item.file_size_bytes &&
+          typeof candidate?.asset_pointer === "string" &&
+          candidate.asset_pointer.includes(item.file_id)
+        );
+        if (origin?.author?.role !== "tool" || !part) {
+          throw new Error("IMAGE_READBACK_FAILED:origin_message_mismatch");
+        }
+
+        const resolved = await apiClient.safeGet("/files/library/files/{library_file_id}/content_url", {
+          parameters: { path: { library_file_id: item.id } }
+        });
+        if (typeof resolved?.content_url !== "string") {
+          throw new Error("IMAGE_DOWNLOAD_FAILED:content_url_missing");
+        }
+        const response = await fetch(resolved.content_url);
+        if (!response.ok) throw new Error("IMAGE_DOWNLOAD_FAILED:content_fetch_failed");
+        const mimeType = response.headers.get("content-type")?.split(";", 1)[0] ?? item.mime_type;
+        if (mimeType !== item.mime_type) throw new Error("IMAGE_DOWNLOAD_FAILED:mime_mismatch");
+        const content = new Uint8Array(await response.arrayBuffer());
+        if (content.byteLength !== item.file_size_bytes) {
+          content.fill(0);
+          throw new Error("IMAGE_DOWNLOAD_FAILED:size_mismatch");
+        }
+        const sha256 = [...new Uint8Array(await crypto.subtle.digest("SHA-256", content))]
+          .map((value) => value.toString(16).padStart(2, "0"))
+          .join("");
+        const downloadHandle = crypto.randomUUID();
+        downloads.set(downloadHandle, {
+          content,
+          libraryFileId: item.id,
+          fileId: item.file_id,
+          parentDirectoryId: item.parent_directory_id,
+          fileName: typeof item.name === "string" && item.name.length > 0 ? item.name : null
+        });
+        results.push({
+          downloadHandle,
+          mimeType,
+          bytes: content.byteLength,
+          sha256,
+          width: Number.isSafeInteger(part.width) && part.width > 0 ? part.width : null,
+          height: Number.isSafeInteger(part.height) && part.height > 0 ? part.height : null
+        });
+      }
+      return results;
+    } catch (error) {
+      for (const result of results) clearDownload(result.downloadHandle);
+      throw error;
+    }
+  };
+
+  const extractResult = (conversation, allowEmptyText = false) => {
     const thread = threadGetter(conversation.id);
     const message = treeApi.getLastAssistantMessage(thread);
     const text = Array.isArray(message?.content?.parts)
       ? message.content.parts.filter((part) => typeof part === "string").join("")
       : "";
-    if (!message || message.status !== "finished_successfully" || message.end_turn !== true || text.length === 0) {
+    if (!message || message.status !== "finished_successfully" || message.end_turn !== true || (!allowEmptyText && text.length === 0)) {
       throw new Error("STREAM_INCOMPLETE");
     }
     const metadata = message.metadata ?? {};
@@ -323,7 +474,10 @@ const bridgeBootstrapSource = String.raw`async function(coreUrl, conversationUrl
       operationCount: operations.size,
       uploadCount: uploads.size,
       bufferedUploadBytes: [...uploads.values()]
-        .reduce((total, upload) => total + (upload.state === "receiving" ? upload.receivedBytes : 0), 0)
+        .reduce((total, upload) => total + (upload.state === "receiving" ? upload.receivedBytes : 0), 0),
+      downloadCount: downloads.size,
+      bufferedDownloadBytes: [...downloads.values()]
+        .reduce((total, download) => total + download.content.byteLength, 0)
     }),
     createUpload: (input) => {
       if (
@@ -491,6 +645,56 @@ const bridgeBootstrapSource = String.raw`async function(coreUrl, conversationUrl
       const discarded = uploads.delete(uploadHandle);
       return { discarded };
     },
+    readDownloadChunk: (downloadHandle, offset, length) => {
+      const download = downloads.get(downloadHandle);
+      if (
+        !download ||
+        !Number.isSafeInteger(offset) ||
+        !Number.isSafeInteger(length) ||
+        offset < 0 ||
+        length <= 0 ||
+        length > 256 * 1024 ||
+        offset + length > download.content.byteLength
+      ) {
+        throw new Error("IMAGE_DOWNLOAD_FAILED:invalid_chunk_request");
+      }
+      const bytes = download.content.subarray(offset, offset + length);
+      let binary = "";
+      for (let index = 0; index < bytes.length; index += 0x8000) {
+        binary += String.fromCharCode(...bytes.subarray(index, Math.min(index + 0x8000, bytes.length)));
+      }
+      return {
+        base64Chunk: btoa(binary),
+        offset,
+        bytes: bytes.byteLength,
+        totalBytes: download.content.byteLength
+      };
+    },
+    discardDownload: (downloadHandle) => ({ discarded: clearDownload(downloadHandle) }),
+    softDeleteDownloadSource: async (downloadHandle) => {
+      const download = downloads.get(downloadHandle);
+      if (!download) throw new Error("IMAGE_CLEANUP_FAILED:download_handle_not_found");
+      await apiClient.safeDelete("/files/library/files/{library_file_id}", {
+        parameters: {
+          path: { library_file_id: download.libraryFileId },
+          query: {
+            file_id: download.fileId,
+            ...(download.parentDirectoryId == null
+              ? {}
+              : { parent_directory_id: download.parentDirectoryId }),
+            ...(download.fileName == null ? {} : { file_name: download.fileName }),
+            soft_delete: true
+          }
+        }
+      });
+      const library = await apiClient.safeGet("/files/library/nodes", {
+        parameters: { query: { include_hidden_files: true } }
+      });
+      if ((library?.items ?? []).some((item) => item?.id === download.libraryFileId)) {
+        throw new Error("IMAGE_CLEANUP_FAILED:active_library_item_remains");
+      }
+      return { softDeleted: true };
+    },
     startModels: () => {
       const operationId = startOperation("models");
       const operation = operations.get(operationId);
@@ -532,6 +736,7 @@ const bridgeBootstrapSource = String.raw`async function(coreUrl, conversationUrl
       if (session) session.busy = true;
 
       void (async () => {
+        let generatedImages = [];
         try {
           await validateSelection(input.model, input.effort);
           const attachments = turnUploads.map((upload) => upload.attachment);
@@ -584,20 +789,24 @@ const bridgeBootstrapSource = String.raw`async function(coreUrl, conversationUrl
             callsiteId: "request_completion.gpt_connector.1",
             eventSource: "url"
           });
-          const result = extractResult(session.conversation);
+          if (input.imageMode === true) {
+            generatedImages = await readBackGeneratedImages(session.conversation);
+          }
+          const result = extractResult(session.conversation, generatedImages.length > 0);
           const attachmentSummary = await readBackAttachments(
             session.conversation,
             attachments
           );
           if (input.keepOpen === true) {
-            operation.result = { ...result, attachments: attachmentSummary, sessionId };
+            operation.result = { ...result, attachments: attachmentSummary, images: generatedImages, sessionId };
           } else {
             await archive(session.conversation);
             sessions.delete(sessionId);
-            operation.result = { ...result, attachments: attachmentSummary };
+            operation.result = { ...result, attachments: attachmentSummary, images: generatedImages };
           }
           operation.state = "succeeded";
         } catch (error) {
+          for (const image of generatedImages) clearDownload(image.downloadHandle);
           let cleanupError = null;
           if (session && (createdSession || input.keepOpen !== true)) {
             if (serverIdOf(session.conversation)) {
@@ -619,6 +828,9 @@ const bridgeBootstrapSource = String.raw`async function(coreUrl, conversationUrl
             : message.startsWith("STREAM_INCOMPLETE") ? "STREAM_INCOMPLETE"
             : message.startsWith("ARCHIVE_FAILED") ? "ARCHIVE_FAILED"
             : message.startsWith("ATTACHMENT_READBACK_FAILED") ? "ATTACHMENT_READBACK_FAILED"
+            : message.startsWith("IMAGE_NOT_GENERATED") ? "IMAGE_NOT_GENERATED"
+            : message.startsWith("IMAGE_READBACK_FAILED") ? "IMAGE_READBACK_FAILED"
+            : message.startsWith("IMAGE_DOWNLOAD_FAILED") ? "IMAGE_DOWNLOAD_FAILED"
             : message.startsWith("UPLOAD_FAILED") ? "UPLOAD_FAILED"
             : message.startsWith("RUNTIME_DRIFT") ? "RUNTIME_DRIFT"
             : "CHAT_FAILED";
@@ -694,6 +906,9 @@ export function createBridgeCallExpression(
     | "appendUploadChunk"
     | "startUpload"
     | "discardUpload"
+    | "readDownloadChunk"
+    | "discardDownload"
+    | "softDeleteDownloadSource"
     | "diagnostics"
     | "startModels"
     | "startChat"

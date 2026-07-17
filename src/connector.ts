@@ -14,6 +14,7 @@ import {
   chatInputSchema,
   closeInputSchema,
   consultInputSchema,
+  imageInputSchema,
   sessionsInputSchema,
   type ChatInput,
   type ChatResult,
@@ -23,9 +24,16 @@ import {
   type ConsultDryRunResult,
   type ConsultInput,
   type ConsultSnapshot,
+  type ImageInput,
+  type ImageSnapshot,
   type ModelCatalog,
   type SessionsInput,
 } from "./contract.js";
+import {
+  prepareGeneratedImageOutput,
+  writeGeneratedImageFiles,
+  type GeneratedImageBytes,
+} from "./generated-image-files.js";
 import { ConsultJobStore } from "./consult-job-store.js";
 import {
   ConnectorError,
@@ -93,6 +101,41 @@ const bridgeChatResultSchema = chatResultSchema.extend({
 
 type BridgeChatResult = z.output<typeof bridgeChatResultSchema>;
 
+const bridgeGeneratedImageSchema = z.object({
+  downloadHandle: z.string().uuid(),
+  mimeType: z.string().startsWith("image/"),
+  bytes: z.number().int().positive(),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/u),
+  width: z.number().int().positive().nullable(),
+  height: z.number().int().positive().nullable(),
+});
+
+const bridgeImageResultSchema = z.object({
+  text: z.string(),
+  status: z.string(),
+  endTurn: z.literal(true),
+  resolvedModel: z.string().nullable(),
+  resolvedEffort: z.string().nullable(),
+  attachments: attachmentSummarySchema,
+  images: z.array(bridgeGeneratedImageSchema).min(1),
+});
+
+type BridgeImageResult = z.output<typeof bridgeImageResultSchema>;
+
+interface RetrievedGeneratedImage extends GeneratedImageBytes {
+  readonly downloadHandle: string;
+}
+
+export function imageResolutionMatches(
+  requestedModel: string,
+  requestedEffort: string | undefined,
+  resolvedModel: string | null,
+  resolvedEffort: string | null,
+): boolean {
+  return resolvedModel === requestedModel
+    && (requestedEffort === undefined || resolvedEffort === requestedEffort);
+}
+
 const uploadHandleSchema = z.object({ uploadHandle: z.string().uuid() });
 const uploadChunkResultSchema = z.object({ receivedBytes: z.number().int().nonnegative() });
 const uploadResultSchema = z.object({
@@ -103,6 +146,16 @@ const uploadResultSchema = z.object({
 });
 
 const uploadChunkBytes = 256 * 1024;
+const downloadChunkBytes = 256 * 1024;
+
+const downloadChunkSchema = z.object({
+  base64Chunk: z.string().min(1),
+  offset: z.number().int().nonnegative(),
+  bytes: z.number().int().positive(),
+  totalBytes: z.number().int().positive(),
+});
+const discardDownloadSchema = z.object({ discarded: z.literal(true) });
+const softDeleteDownloadSchema = z.object({ softDeleted: z.literal(true) });
 
 const closeResultSchema = z.object({ archived: z.literal(true) });
 
@@ -111,6 +164,8 @@ const pageDiagnosticsSchema = z.object({
   operationCount: z.number().int().nonnegative(),
   uploadCount: z.number().int().nonnegative(),
   bufferedUploadBytes: z.number().int().nonnegative(),
+  downloadCount: z.number().int().nonnegative(),
+  bufferedDownloadBytes: z.number().int().nonnegative(),
 });
 
 export interface ConnectorOptions {
@@ -187,6 +242,8 @@ export class GptConnector {
         operationCount: null,
         uploadCount: null,
         bufferedUploadBytes: null,
+        downloadCount: null,
+        bufferedDownloadBytes: null,
         jobCount: null,
         activeJobCount: null,
         terminalJobCount: null,
@@ -285,6 +342,28 @@ export class GptConnector {
     return this.#runConsultJob(parsed, prepared.files);
   }
 
+  async image(input: ImageInput): Promise<ImageSnapshot> {
+    let parsed: z.output<typeof imageInputSchema>;
+    try {
+      parsed = imageInputSchema.parse(input);
+    } catch {
+      throw new ConnectorError("INVALID_INPUT", "image inputが公開schemaに一致しません。");
+    }
+
+    const catalog = await this.models();
+    validateModelSelection(catalog, parsed.model, parsed.effort);
+    const fingerprint = imageFingerprint({
+      prompt: parsed.prompt,
+      workspaceRoot: parsed.workspaceRoot,
+      output: parsed.output,
+      model: parsed.model,
+      effort: parsed.effort ?? null,
+    });
+    const reservation = await this.#jobs.reserve(parsed.slug, fingerprint);
+    if (!reservation.created) return reservation.snapshot;
+    return this.#runImageJob(parsed);
+  }
+
   sessions(input: SessionsInput): ConsultSnapshot {
     let parsed: z.output<typeof sessionsInputSchema>;
     try {
@@ -365,6 +444,309 @@ export class GptConnector {
         },
       });
     }
+  }
+
+  async #runImageJob(
+    parsed: z.output<typeof imageInputSchema>,
+  ): Promise<ImageSnapshot> {
+    let images: readonly RetrievedGeneratedImage[] = [];
+    let downloadsDiscarded = false;
+    try {
+      await prepareGeneratedImageOutput({
+        workspaceRoot: parsed.workspaceRoot,
+        output: parsed.output,
+      });
+      await this.#jobs.transition(parsed.slug, "submitted");
+      await this.#jobs.transition(parsed.slug, "running");
+      const result = await this.#imageParsed(parsed);
+      images = await this.#downloadGeneratedImages(result.images);
+      const files = await writeGeneratedImageFiles({
+        workspaceRoot: parsed.workspaceRoot,
+        output: parsed.output,
+        images,
+      });
+      const cleanup = await this.#softDeleteGeneratedImageSources(images);
+      const discardFailureCount = await this.#discardGeneratedImageDownloads(images);
+      downloadsDiscarded = discardFailureCount === 0;
+      const finalCleanup = discardFailureCount === 0
+        ? cleanup
+        : {
+            retention: cleanup.retention === "recently_deleted" ? "recently_deleted" as const : "mixed" as const,
+            cleanup: "failed" as const,
+          };
+      return this.#jobs.transition(parsed.slug, "succeeded", {
+        result: {
+          text: result.text,
+          status: result.status,
+          endTurn: true,
+          resolvedModel: result.resolvedModel,
+          resolvedEffort: result.resolvedEffort,
+          attachments: {
+            count: 0,
+            names: [],
+            mimeTypes: [],
+            readBack: "confirmed",
+            retention: "unknown",
+            cleanup: "not_supported",
+          },
+          images: {
+            count: files.length,
+            files,
+            readBack: "confirmed",
+            ...finalCleanup,
+          },
+          archived: true,
+        },
+        error: null,
+      });
+    } catch (error) {
+      const discardFailureCount = downloadsDiscarded
+        ? 0
+        : await this.#discardGeneratedImageDownloads(images);
+      const connectorError = discardFailureCount > 0
+        ? new ConnectorError(
+            "IMAGE_CLEANUP_FAILED",
+            "image job失敗後にpage側bufferを完全破棄できませんでした。",
+            { discardFailureCount },
+          )
+        : error instanceof ConnectorError
+        ? error
+        : new ConnectorError("CHAT_FAILED", "image jobが失敗しました。");
+      return this.#jobs.transition(parsed.slug, "failed", {
+        result: null,
+        error: {
+          code: connectorError.code,
+          message: connectorError.message,
+          retry: retryFor(connectorError.code),
+        },
+      });
+    } finally {
+      for (const image of images) image.content.fill(0);
+    }
+  }
+
+  async #imageParsed(
+    parsed: z.output<typeof imageInputSchema>,
+  ): Promise<BridgeImageResult> {
+    const raw = await this.#runOperation("startChat", [{
+      prompt: imageGenerationPrompt(parsed.prompt),
+      model: parsed.model,
+      effort: parsed.effort,
+      keepOpen: false,
+      attachmentHandles: [],
+      imageMode: true,
+    }]);
+    const result = bridgeImageResultSchema.safeParse(raw);
+    if (result.success) {
+      if (imageResolutionMatches(
+        parsed.model,
+        parsed.effort,
+        result.data.resolvedModel,
+        result.data.resolvedEffort,
+      )) return result.data;
+
+      let cleanupFailureCount = 0;
+      for (const image of result.data.images) {
+        try {
+          await evaluateByValue<unknown>(
+            this.#client,
+            createBridgeCallExpression("softDeleteDownloadSource", [image.downloadHandle]),
+          );
+        } catch {
+          cleanupFailureCount += 1;
+        }
+        try {
+          await evaluateByValue<unknown>(
+            this.#client,
+            createBridgeCallExpression("discardDownload", [image.downloadHandle]),
+            false,
+          );
+        } catch {
+          cleanupFailureCount += 1;
+        }
+      }
+      throw new ConnectorError(
+        "MODEL_RESOLUTION_MISMATCH",
+        "画像生成のresolved modelまたはeffortがrequested selectionと一致しませんでした。",
+        {
+          requestedModel: parsed.model,
+          resolvedModel: result.data.resolvedModel,
+          requestedEffort: parsed.effort ?? null,
+          resolvedEffort: result.data.resolvedEffort,
+          cleanupFailureCount,
+        },
+      );
+    }
+
+    const handles = z.array(z.object({ downloadHandle: z.string().uuid() }))
+      .safeParse((raw as { images?: unknown } | null)?.images);
+    let cleanupFailureCount = 0;
+    if (handles.success) {
+      for (const image of handles.data) {
+        try {
+          await evaluateByValue<unknown>(
+            this.#client,
+            createBridgeCallExpression("discardDownload", [image.downloadHandle]),
+            false,
+          );
+        } catch {
+          cleanupFailureCount += 1;
+        }
+      }
+    }
+    throw new ConnectorError(
+      "RUNTIME_DRIFT",
+      cleanupFailureCount === 0
+        ? "画像生成結果がbridge schemaに一致しませんでした。"
+        : "画像生成結果のschema不一致後にpage側bufferを完全破棄できませんでした。",
+      { cleanupFailureCount },
+    );
+  }
+
+  async #downloadGeneratedImages(
+    descriptors: BridgeImageResult["images"],
+  ): Promise<readonly RetrievedGeneratedImage[]> {
+    const results: RetrievedGeneratedImage[] = [];
+    try {
+      for (const descriptor of descriptors) {
+        const chunks: Buffer[] = [];
+        try {
+          for (let offset = 0; offset < descriptor.bytes; offset += downloadChunkBytes) {
+            const length = Math.min(downloadChunkBytes, descriptor.bytes - offset);
+            const chunk = downloadChunkSchema.parse(
+              await evaluateByValue<unknown>(
+                this.#client,
+                createBridgeCallExpression("readDownloadChunk", [
+                  descriptor.downloadHandle,
+                  offset,
+                  length,
+                ]),
+                false,
+              ),
+            );
+            if (
+              chunk.offset !== offset ||
+              chunk.bytes !== length ||
+              chunk.totalBytes !== descriptor.bytes
+            ) {
+              throw new ConnectorError(
+                "IMAGE_DOWNLOAD_FAILED",
+                "生成画像のchunk metadataが一致しませんでした。",
+              );
+            }
+            const bytes = Buffer.from(chunk.base64Chunk, "base64");
+            if (bytes.byteLength !== length) {
+              bytes.fill(0);
+              throw new ConnectorError(
+                "IMAGE_DOWNLOAD_FAILED",
+                "生成画像のchunk byte数が一致しませんでした。",
+              );
+            }
+            chunks.push(bytes);
+          }
+          const content = Buffer.concat(chunks);
+          for (const chunk of chunks) chunk.fill(0);
+          if (
+            content.byteLength !== descriptor.bytes ||
+            createHash("sha256").update(content).digest("hex") !== descriptor.sha256
+          ) {
+            content.fill(0);
+            throw new ConnectorError(
+              "IMAGE_DOWNLOAD_FAILED",
+              "生成画像のbyte数またはdigestが一致しませんでした。",
+            );
+          }
+          results.push({
+            downloadHandle: descriptor.downloadHandle,
+            content,
+            mimeType: descriptor.mimeType,
+            bytes: descriptor.bytes,
+            sha256: descriptor.sha256,
+            width: descriptor.width,
+            height: descriptor.height,
+          });
+        } catch (error) {
+          for (const chunk of chunks) chunk.fill(0);
+          throw error;
+        }
+      }
+      return results;
+    } catch (error) {
+      for (const result of results) result.content.fill(0);
+      let cleanupFailureCount = 0;
+      for (const descriptor of descriptors) {
+        try {
+          await evaluateByValue<unknown>(
+            this.#client,
+            createBridgeCallExpression("discardDownload", [descriptor.downloadHandle]),
+            false,
+          );
+        } catch {
+          cleanupFailureCount += 1;
+        }
+      }
+      if (cleanupFailureCount > 0) {
+        throw new ConnectorError(
+          "IMAGE_DOWNLOAD_FAILED",
+          "生成画像の回収失敗後にpage側bufferを完全破棄できませんでした。",
+          {
+            cleanupFailureCount,
+            originalCode: error instanceof ConnectorError ? error.code : "IMAGE_DOWNLOAD_FAILED",
+          },
+        );
+      }
+      if (error instanceof ConnectorError) throw error;
+      throw new ConnectorError("IMAGE_DOWNLOAD_FAILED", "生成画像をpageから回収できませんでした。");
+    }
+  }
+
+  async #softDeleteGeneratedImageSources(
+    images: readonly RetrievedGeneratedImage[],
+  ): Promise<{
+    readonly retention: "library" | "recently_deleted" | "mixed";
+    readonly cleanup: "soft_deleted" | "failed" | "partial";
+  }> {
+    let softDeletedCount = 0;
+    for (const image of images) {
+      try {
+        softDeleteDownloadSchema.parse(
+          await evaluateByValue<unknown>(
+            this.#client,
+            createBridgeCallExpression("softDeleteDownloadSource", [image.downloadHandle]),
+          ),
+        );
+        softDeletedCount += 1;
+      } catch {
+        // aggregate結果へ明示し、保存済みlocal imageは成功結果として維持する。
+      }
+    }
+    if (softDeletedCount === images.length) {
+      return { retention: "recently_deleted", cleanup: "soft_deleted" };
+    }
+    if (softDeletedCount === 0) {
+      return { retention: "library", cleanup: "failed" };
+    }
+    return { retention: "mixed", cleanup: "partial" };
+  }
+
+  async #discardGeneratedImageDownloads(
+    images: readonly RetrievedGeneratedImage[],
+  ): Promise<number> {
+    let failureCount = 0;
+    for (const image of images) {
+      try {
+        discardDownloadSchema.parse(
+          await evaluateByValue<unknown>(
+            this.#client,
+            createBridgeCallExpression("discardDownload", [image.downloadHandle]),
+            false,
+          ),
+        );
+      } catch {
+        failureCount += 1;
+      }
+    }
+    return failureCount;
   }
 
   async #chatParsed(
@@ -741,6 +1123,34 @@ function consultFingerprint(input: {
     .digest("hex");
 }
 
+function imageFingerprint(input: {
+  readonly prompt: string;
+  readonly workspaceRoot: string;
+  readonly output: string;
+  readonly model: string;
+  readonly effort: string | null;
+}): string {
+  return createHash("sha256")
+    .update(JSON.stringify({
+      kind: "image.v1",
+      promptSha256: createHash("sha256").update(input.prompt).digest("hex"),
+      workspaceRoot: input.workspaceRoot,
+      output: input.output,
+      model: input.model,
+      effort: input.effort,
+    }))
+    .digest("hex");
+}
+
+function imageGenerationPrompt(prompt: string): string {
+  return [
+    "画像生成ツールを使い、次の仕様に従う画像を1枚生成してください。",
+    "説明文だけで終えず、必ず実画像を生成してください。",
+    "",
+    prompt,
+  ].join("\n");
+}
+
 function retryFor(code: ConnectorErrorCode): ConsultSnapshot["error"] extends infer T
   ? T extends { retry: infer R } ? R : never
   : never {
@@ -756,6 +1166,7 @@ function retryFor(code: ConnectorErrorCode): ConsultSnapshot["error"] extends in
     code === "FILE_LIMIT_EXCEEDED" ||
     code === "MODEL_NOT_AVAILABLE" ||
     code === "EFFORT_NOT_SUPPORTED"
+    || code === "IMAGE_OUTPUT_FAILED"
   ) return "after_input_change";
   if (
     code === "UPLOAD_TIMEOUT" ||
@@ -764,6 +1175,11 @@ function retryFor(code: ConnectorErrorCode): ConsultSnapshot["error"] extends in
     code === "STREAM_INCOMPLETE" ||
     code === "ATTACHMENT_READBACK_FAILED" ||
     code === "JOB_RECOVERY_UNAVAILABLE"
+    || code === "IMAGE_NOT_GENERATED"
+    || code === "IMAGE_READBACK_FAILED"
+    || code === "IMAGE_DOWNLOAD_FAILED"
+    || code === "IMAGE_CLEANUP_FAILED"
+    || code === "MODEL_RESOLUTION_MISMATCH"
   ) return "status_first";
   return "never";
 }

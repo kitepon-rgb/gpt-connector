@@ -46,6 +46,35 @@ export const consultInputSchema = z
 
 export type ConsultInput = z.input<typeof consultInputSchema>;
 
+export const imageInputSchema = z
+  .object({
+    prompt: z.string().min(1),
+    workspaceRoot: z.string().min(1),
+    output: z.string().min(1),
+    model: z.string().min(1),
+    effort: z.string().min(1).optional(),
+    slug: consultSlugSchema,
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (!isAbsolute(input.workspaceRoot)) {
+      context.addIssue({
+        code: "custom",
+        message: "workspaceRootはabsolute pathで指定してください。",
+        path: ["workspaceRoot"],
+      });
+    }
+    if (isAbsolute(input.output) || input.output.includes("\0")) {
+      context.addIssue({
+        code: "custom",
+        message: "outputはworkspaceRoot相対pathで指定してください。",
+        path: ["output"],
+      });
+    }
+  });
+
+export type ImageInput = z.input<typeof imageInputSchema>;
+
 export const sessionsInputSchema = z
   .object({ slug: consultSlugSchema })
   .strict();
@@ -142,6 +171,8 @@ export interface ConnectorDiagnostics {
   readonly operationCount: number | null;
   readonly uploadCount: number | null;
   readonly bufferedUploadBytes: number | null;
+  readonly downloadCount: number | null;
+  readonly bufferedDownloadBytes: number | null;
   readonly jobCount: number | null;
   readonly activeJobCount: number | null;
   readonly terminalJobCount: number | null;
@@ -166,8 +197,28 @@ export interface ConsultAttachmentSummary {
 
 export interface ConsultSuccessResult extends ChatResult {
   readonly attachments: ConsultAttachmentSummary;
+  readonly images?: GeneratedImageSummary;
   readonly archived: boolean;
 }
+
+export interface GeneratedImageFile {
+  readonly relativePath: string;
+  readonly mimeType: string;
+  readonly bytes: number;
+  readonly sha256: string;
+  readonly width: number | null;
+  readonly height: number | null;
+}
+
+export interface GeneratedImageSummary {
+  readonly count: number;
+  readonly files: readonly GeneratedImageFile[];
+  readonly readBack: "confirmed";
+  readonly retention: "library" | "recently_deleted" | "mixed";
+  readonly cleanup: "not_supported" | "soft_deleted" | "failed" | "partial";
+}
+
+export type ImageSnapshot = ConsultSnapshot;
 
 export interface ConsultFailure {
   readonly code: ConnectorErrorCode;

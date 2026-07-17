@@ -43,6 +43,27 @@ test("bridgeは公式upload objectとattachment read-backを一意化する", ()
   assert.match(expression, /ATTACHMENT_READBACK_FAILED/u);
 });
 
+test("bridgeは生成画像をcurrent turnとLibraryの二重IDで相関しchunk回収する", () => {
+  const expression = createBridgeBootstrapExpression(
+    "https://cdn.oaistatic.com/assets/core.js",
+    "https://cdn.oaistatic.com/assets/conversation.js",
+    "https://cdn.oaistatic.com/assets/upload.js",
+  );
+
+  assert.match(expression, /origination_thread_id/u);
+  assert.match(expression, /origination_message_id/u);
+  assert.match(expression, /getLastAssistantMessage/u);
+  assert.match(expression, /turn_exchange_id/u);
+  assert.match(expression, /working_turn_id/u);
+  assert.match(expression, /image_asset_pointer/u);
+  assert.match(expression, /IMAGE_NOT_GENERATED/u);
+  assert.match(expression, /readDownloadChunk/u);
+  assert.match(expression, /discardDownload/u);
+  assert.match(expression, /softDeleteDownloadSource/u);
+  assert.match(expression, /soft_delete:\s*true/u);
+  assert.doesNotMatch(expression, /items\?\.\[0\]|items\[0\]/u);
+});
+
 test("asset discoveryもUI selectorへ依存しない", async () => {
   const source = await import("../src/asset-discovery.js");
   assert.doesNotMatch(source.listLoadedAssetUrls.toString(), /querySelector|__reactFiber/u);

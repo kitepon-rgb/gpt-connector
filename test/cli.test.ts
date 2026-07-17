@@ -28,4 +28,5 @@ test("helpはbrowser showを案内する", () => {
   const result = runCli("--help");
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /browser <start\|show>/u);
+  assert.match(result.stdout, /image --prompt/u);
 });

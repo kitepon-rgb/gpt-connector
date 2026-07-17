@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.0 — 2026-07-17
+
+- ChatGPT通常枠の画像生成を正式機能化し、CLI `image` とMCP `chatgpt_image` を追加した。
+- 生成画像はserver conversationの同一turnとLibraryの`origination` metadataを相関し、MIME、byte数、
+  dimensions、SHA-256を照合してから256KiB chunkでローカルへ回収する。
+- 保存先をabsolute `workspaceRoot` 配下へ限定し、root外symlink、既存file上書き、MIME／拡張子不一致を
+  fail-closedで拒否する。複数枚は決定的suffixで保存する。
+- 画像jobを既存slug台帳と`sessions`回収へ統合し、会話は成功・失敗ともarchiveする。local保存とdigest
+  再検証後、生成元だけをChatGPT LibraryのRecently Deletedへsoft-deleteし、失敗／partialも結果へ明示する。
+- 画像jobはrequested model／effortとassistantのresolved metadataの完全一致を必須にし、runtime側の暗黙model
+  変更を`MODEL_RESOLUTION_MISMATCH`で拒否する。
+
 ## 0.3.1 — 2026-07-14
 
 - live browser launcherがmacOS専用である契約に合わせ、LinuxとWindowsのfactory diagnosticsを

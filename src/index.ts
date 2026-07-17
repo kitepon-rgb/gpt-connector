@@ -5,6 +5,7 @@ export * from "./errors.js";
 export * from "./factory-diagnostics.js";
 export * from "./asset-discovery.js";
 export * from "./attachment-files.js";
+export * from "./generated-image-files.js";
 export * from "./consult-job-store.js";
 export * from "./model-catalog.js";
 export * from "./mcp-server.js";

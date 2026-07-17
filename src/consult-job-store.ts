@@ -30,6 +30,25 @@ const attachmentSummarySchema = z.object({
   cleanup: z.enum(["not_supported", "failed", "deleted"]),
 }).strict();
 
+const generatedImageSummarySchema = z.object({
+  count: z.number().int().positive(),
+  files: z.array(z.object({
+    relativePath: z.string().min(1),
+    mimeType: z.string().startsWith("image/"),
+    bytes: z.number().int().positive(),
+    sha256: z.string().regex(/^[0-9a-f]{64}$/u),
+    width: z.number().int().positive().nullable(),
+    height: z.number().int().positive().nullable(),
+  }).strict()).min(1),
+  readBack: z.literal("confirmed"),
+  retention: z.enum(["library", "recently_deleted", "mixed"]),
+  cleanup: z.enum(["not_supported", "soft_deleted", "failed", "partial"]),
+}).strict().superRefine((value, context) => {
+  if (value.count !== value.files.length) {
+    context.addIssue({ code: "custom", message: "image count mismatch" });
+  }
+});
+
 const successResultSchema = z.object({
   text: z.string(),
   status: z.string(),
@@ -38,6 +57,7 @@ const successResultSchema = z.object({
   resolvedEffort: z.string().nullable(),
   sessionId: z.string().uuid().optional(),
   attachments: attachmentSummarySchema,
+  images: generatedImageSummarySchema.optional(),
   archived: z.boolean(),
 }).strict();
 
@@ -109,7 +129,7 @@ export interface ConsultJobTransitionUpdate {
 }
 
 const allowedTransitions = new Map<ConsultJobState, readonly ConsultJobState[]>([
-  ["queued", ["uploading", "failed"]],
+  ["queued", ["uploading", "submitted", "failed"]],
   ["uploading", ["submitted", "failed"]],
   ["submitted", ["running", "failed"]],
   ["running", ["succeeded", "failed"]],

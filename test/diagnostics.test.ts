@@ -21,6 +21,8 @@ test("doctorはCDP不在でも固定schemaのnot_readyを返す", async () => {
     operationCount: null,
     uploadCount: null,
     bufferedUploadBytes: null,
+    downloadCount: null,
+    bufferedDownloadBytes: null,
     jobCount: null,
     activeJobCount: null,
     terminalJobCount: null,

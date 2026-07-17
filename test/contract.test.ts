@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   consultInputSchema,
+  imageInputSchema,
   sessionsInputSchema,
 } from "../src/contract.js";
 import { packageVersion } from "../src/version.js";
@@ -78,4 +79,45 @@ test("sessions inputはexact slugだけを受ける", () => {
   });
   assert.throws(() => sessionsInputSchema.parse({}));
   assert.throws(() => sessionsInputSchema.parse({ slug: "review-001", list: true }));
+});
+
+test("image inputはmodelと安全な保存境界を必須にする", () => {
+  assert.deepEqual(
+    imageInputSchema.parse({
+      prompt: "珊瑚色の円",
+      slug: "image-001",
+      workspaceRoot: "/workspace",
+      output: "assets/ad.png",
+      model: "gpt-5-6-thinking",
+      effort: "min",
+    }),
+    {
+      prompt: "珊瑚色の円",
+      slug: "image-001",
+      workspaceRoot: "/workspace",
+      output: "assets/ad.png",
+      model: "gpt-5-6-thinking",
+      effort: "min",
+    },
+  );
+  assert.throws(() => imageInputSchema.parse({
+    prompt: "x",
+    slug: "image-001",
+    workspaceRoot: "relative",
+    output: "ad.png",
+    model: "gpt-5-6-thinking",
+  }));
+  assert.throws(() => imageInputSchema.parse({
+    prompt: "x",
+    slug: "image-001",
+    workspaceRoot: "/workspace",
+    output: "/tmp/ad.png",
+    model: "gpt-5-6-thinking",
+  }));
+  assert.throws(() => imageInputSchema.parse({
+    prompt: "x",
+    slug: "image-001",
+    workspaceRoot: "/workspace",
+    output: "ad.png",
+  }));
 });

@@ -30,6 +30,20 @@ interface ConsultSnapshot {
     readonly resolvedModel: string | null;
     readonly resolvedEffort: string | null;
     readonly attachments: AttachmentSummary;
+    readonly images?: {
+      readonly count: number;
+      readonly files: readonly {
+        readonly relativePath: string;
+        readonly mimeType: string;
+        readonly bytes: number;
+        readonly sha256: string;
+        readonly width: number | null;
+        readonly height: number | null;
+      }[];
+      readonly readBack: "confirmed";
+      readonly retention: "library" | "recently_deleted" | "mixed";
+      readonly cleanup: "not_supported" | "soft_deleted" | "failed" | "partial";
+    };
     readonly archived: boolean;
   };
   readonly error: null | {
@@ -146,6 +160,45 @@ test("terminal resultをstate transitionと再initialize後にも保持する", 
     await second.initialize();
     assert.deepEqual(second.get(slug), terminal);
     second.close();
+  });
+});
+
+test("image jobはuploadingなしでsubmittedへ進み生成画像metadataを保持する", async () => {
+  await withStateDirectory(async (stateDirectory) => {
+    const store = createStore(stateDirectory);
+    await store.initialize();
+    await store.reserve("image-job-001", "image-fingerprint");
+    await store.transition("image-job-001", "submitted", {});
+    await store.transition("image-job-001", "running", {});
+    const imageResult: NonNullable<ConsultSnapshot["result"]> = {
+      ...succeededResult,
+      text: "",
+      attachments: {
+        count: 0,
+        names: [],
+        mimeTypes: [],
+        readBack: "confirmed",
+        retention: "unknown",
+        cleanup: "not_supported",
+      },
+      images: {
+        count: 1,
+        files: [{
+          relativePath: "assets/ad.png",
+          mimeType: "image/png",
+          bytes: 4,
+          sha256: "0".repeat(64),
+          width: 100,
+          height: 200,
+        }],
+        readBack: "confirmed",
+        retention: "recently_deleted",
+        cleanup: "soft_deleted",
+      },
+    };
+    const terminal = await store.transition("image-job-001", "succeeded", { result: imageResult });
+    assert.deepEqual(terminal.result, imageResult);
+    store.close();
   });
 });
 

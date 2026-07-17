@@ -4,10 +4,12 @@ import { z } from "zod";
 import { GptConnector } from "./connector.js";
 import {
   consultInputSchema,
+  imageInputSchema,
   sessionsInputSchema,
   type ChatInput,
   type CloseInput,
   type ConsultInput,
+  type ImageInput,
   type SessionsInput,
 } from "./contract.js";
 import { ConsultJobStore } from "./consult-job-store.js";
@@ -20,6 +22,7 @@ interface ConnectorPort {
   diagnostics(): ReturnType<GptConnector["diagnostics"]>;
   chat(input: ChatInput): ReturnType<GptConnector["chat"]>;
   consult(input: ConsultInput): ReturnType<GptConnector["consult"]>;
+  image(input: ImageInput): ReturnType<GptConnector["image"]>;
   sessions(input: SessionsInput): ReturnType<GptConnector["sessions"]>;
   closeSession(input: CloseInput): ReturnType<GptConnector["closeSession"]>;
   close(): void;
@@ -78,6 +81,7 @@ export class LazyConnectorHost {
 export const mcpToolNames = [
   "chatgpt_models",
   "chatgpt_chat",
+  "chatgpt_image",
   "chatgpt_close",
   "consult",
   "sessions",
@@ -91,7 +95,7 @@ export function createGptConnectorMcpServer(host: LazyConnectorHost): McpServer 
     { name: "gpt-connector", version: mcpServerVersion },
     {
       instructions:
-        "second opinionはconsultへcaller既知slugと必要ならworkspaceRoot/filesを渡す。caller timeout後は再送せずsessionsで同じslugを確認する。live model/effortはchatgpt_models、既存互換chatはchatgpt_chat、終了はchatgpt_closeを使う。",
+        "second opinionはconsult、画像生成はchatgpt_imageへcaller既知slug・model・workspaceRoot・outputを渡す。caller timeout後は再送せずsessionsで同じslugを確認する。live model/effortはchatgpt_models、既存互換chatはchatgpt_chat、終了はchatgpt_closeを使う。",
     },
   );
 
@@ -132,6 +136,22 @@ export function createGptConnectorMcpServer(host: LazyConnectorHost): McpServer 
       },
     },
     async (input) => toolResult(async () => (await host.get()).chat(input)),
+  );
+
+  server.registerTool(
+    "chatgpt_image",
+    {
+      title: "通常Chatで画像生成",
+      description:
+        "ChatGPT通常枠の画像生成ツールで画像を生成し、Libraryと会話を相関確認してworkspaceRoot配下へno-clobber保存する。slugで冪等化する。",
+      inputSchema: imageInputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
+    },
+    async (input) => toolResult(async () => (await host.get()).image(input)),
   );
 
   server.registerTool(

@@ -80,7 +80,7 @@ function writeJson(value: unknown): void {
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv.length === 0 || argv[0] === "--help" || argv[0] === "help") {
-    process.stdout.write("usage: gpt-connector --version | browser <start|show> | models | doctor | factory-diagnostics --json | chat --prompt <text> | consult --prompt <text> --slug <id> | sessions --slug <id> | close --session-id <uuid>\n");
+    process.stdout.write("usage: gpt-connector --version | browser <start|show> | models | doctor | factory-diagnostics --json | chat --prompt <text> | image --prompt <text> --slug <id> --workspace-root <abs> --output <relative.png> --model <id> | consult --prompt <text> --slug <id> | sessions --slug <id> | close --session-id <uuid>\n");
     return;
   }
   if (argv[0] === "runtime-errors") {
@@ -149,6 +149,34 @@ async function main(): Promise<void> {
       return;
     }
 
+    if (command === "image") {
+      const prompt = stringArg(values, "prompt");
+      const slug = stringArg(values, "slug");
+      const workspaceRoot = stringArg(values, "workspace-root");
+      const output = stringArg(values, "output");
+      const model = stringArg(values, "model");
+      if (
+        prompt === undefined ||
+        slug === undefined ||
+        workspaceRoot === undefined ||
+        output === undefined ||
+        model === undefined
+      ) {
+        throw new Error("imageには--prompt、--slug、--workspace-root、--output、--modelが必要です。");
+      }
+      const result = await connector.image({
+        prompt,
+        slug,
+        workspaceRoot,
+        output,
+        model,
+        effort: stringArg(values, "effort"),
+      });
+      writeJson(result);
+      if (result.state === "failed") process.exitCode = 1;
+      return;
+    }
+
     if (command === "consult") {
       const prompt = stringArg(values, "prompt");
       const slug = stringArg(values, "slug");
@@ -176,7 +204,7 @@ async function main(): Promise<void> {
     }
 
     throw new Error(
-      "usage: gpt-connector --version | models | doctor | chat --prompt <text> | consult --prompt <text> --slug <id> [--workspace-root <abs> --file <spec> ...] [--model <id> --effort <id>] [--dry-run] | sessions --slug <id> | close --session-id <uuid>",
+      "usage: gpt-connector --version | models | doctor | chat --prompt <text> | image --prompt <text> --slug <id> --workspace-root <abs> --output <relative.png> --model <id> [--effort <id>] | consult --prompt <text> --slug <id> [--workspace-root <abs> --file <spec> ...] [--model <id> --effort <id>] [--dry-run] | sessions --slug <id> | close --session-id <uuid>",
     );
   } finally {
     connector.close();

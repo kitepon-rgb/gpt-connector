@@ -8,6 +8,7 @@ test("MCP tool名を固定する", () => {
   assert.deepEqual(mcpToolNames, [
     "chatgpt_models",
     "chatgpt_chat",
+    "chatgpt_image",
     "chatgpt_close",
     "consult",
     "sessions",
