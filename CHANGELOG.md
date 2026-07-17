@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.4 — 2026-07-18
+
+- 画像生成turnがChatGPT内部sender promise未解決のままruntime timeoutする問題を修正した。
+  完了判定をthread側の終端assistantメッセージ観測に切り替え、senderは失敗伝搬のみに使う。
+- 画像生成のresolved model照合を、画像tool操作サブターン名義(実測: gpt-5-4-auto-thinking)ではなく
+  turnのuserメッセージ側`resolved_model_slug`で行うようにし、誤`MODEL_RESOLUTION_MISMATCH`を解消した。
+  本物のmodel降格は引き続き照合失敗として検出される。
+
 ## 0.4.3 — 2026-07-18
 
 - dead writerの非terminal jobをread-only `sessions`が`JOB_RECOVERY_UNAVAILABLE`へ回収した後、

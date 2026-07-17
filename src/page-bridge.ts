@@ -354,6 +354,17 @@ const bridgeBootstrapSource = String.raw`async function(coreUrl, conversationUrl
     }
     if (matches.length === 0) throw new Error("IMAGE_NOT_GENERATED:no_correlated_library_image");
 
+    // 画像turnの終端assistantメッセージは画像tool操作サブターン(別model名義, 実測: gpt-5-4-auto-thinking)に
+    // 帰属されるため、requested modelの検証にはturnのuserメッセージ側resolved_model_slugを使う。
+    const promptMessage = Object.values(mapping)
+      .map((node) => node?.message)
+      .filter((message) => message?.author?.role === "user" && typeof message?.create_time === "number")
+      .sort((left, right) => left.create_time - right.create_time)
+      .pop();
+    const promptResolvedModel = typeof promptMessage?.metadata?.resolved_model_slug === "string"
+      ? promptMessage.metadata.resolved_model_slug
+      : null;
+
     matches.sort((left, right) =>
       turnMessageIds.indexOf(right.origination_message_id) -
       turnMessageIds.indexOf(left.origination_message_id)
@@ -411,11 +422,29 @@ const bridgeBootstrapSource = String.raw`async function(coreUrl, conversationUrl
           height: Number.isSafeInteger(part.height) && part.height > 0 ? part.height : null
         });
       }
-      return results;
+      return { images: results, promptResolvedModel };
     } catch (error) {
       for (const result of results) clearDownload(result.downloadHandle);
       throw error;
     }
+  };
+
+  // 画像turnはChatGPT内部のsender promiseが生成完了後もpendingのまま解決しないことがある(実測)。
+  // 完了判定はthread側の終端メッセージ観測を正とし、senderは失敗伝搬のためだけに監視する。
+  const waitForImageTerminalTurn = async (conversation, senderStatus) => {
+    for (let attempt = 0; attempt < 660; attempt += 1) {
+      const status = senderStatus();
+      if (status.state === "rejected") throw status.error;
+      const thread = threadGetter(conversation.id);
+      const message = treeApi.getLastAssistantMessage(thread);
+      if (
+        message?.author?.role === "assistant" &&
+        message?.status === "finished_successfully" &&
+        message?.end_turn === true
+      ) return;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    throw new Error("STREAM_INCOMPLETE:image_terminal_turn_not_observed");
   };
 
   const extractResult = (conversation, allowEmptyText = false) => {
@@ -780,7 +809,7 @@ const bridgeBootstrapSource = String.raw`async function(coreUrl, conversationUrl
             thinkingEffort: input.effort,
             serviceTier: undefined
           });
-          await sender({
+          const senderPromise = sender({
             ...params,
             conversation: session.conversation,
             requestedModelId: input.model,
@@ -789,10 +818,24 @@ const bridgeBootstrapSource = String.raw`async function(coreUrl, conversationUrl
             callsiteId: "request_completion.gpt_connector.1",
             eventSource: "url"
           });
+          let promptResolvedModel = null;
           if (input.imageMode === true) {
-            generatedImages = await readBackGeneratedImages(session.conversation);
+            let senderStatus = { state: "pending", error: null };
+            senderPromise.then(
+              () => { senderStatus = { state: "resolved", error: null }; },
+              (error) => { senderStatus = { state: "rejected", error }; }
+            );
+            await waitForImageTerminalTurn(session.conversation, () => senderStatus);
+            const readBack = await readBackGeneratedImages(session.conversation);
+            generatedImages = readBack.images;
+            promptResolvedModel = readBack.promptResolvedModel;
+          } else {
+            await senderPromise;
           }
           const result = extractResult(session.conversation, generatedImages.length > 0);
+          // 画像turnの終端assistantメッセージのmodel slugはtool操作サブターン名義。
+          // requested modelの照合対象はuserメッセージ側のresolved_model_slugに置き換える(nullなら照合失敗として上位で弾く)。
+          if (input.imageMode === true) result.resolvedModel = promptResolvedModel;
           const attachmentSummary = await readBackAttachments(
             session.conversation,
             attachments
