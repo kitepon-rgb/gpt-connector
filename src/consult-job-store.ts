@@ -152,6 +152,7 @@ export class ConsultJobStore {
   #initialized = false;
   #closed = false;
   #ownsWriterLock = false;
+  #readOnlyRecovered = false;
   #exclusiveTail: Promise<void> = Promise.resolve();
 
   constructor(options: ConsultJobStoreOptions = {}) {
@@ -174,6 +175,7 @@ export class ConsultJobStore {
         const recovered = this.#recoverNonTerminal(loaded);
         if (this.#readOnly) {
           this.#jobs = recovered;
+          this.#readOnlyRecovered = true;
         } else {
           await this.#acquireWriterLock();
           try {
@@ -446,7 +448,9 @@ export class ConsultJobStore {
   }
 
   #refreshJobsForRead(): void {
-    if (this.#ownsWriterLock) return;
+    // dead writerをread-only初期化で回収したsnapshotは、このprocess内の正規回答。
+    // raw台帳を再読込するとrunningへ巻き戻るため、sessions完了まで固定する。
+    if (this.#ownsWriterLock || this.#readOnlyRecovered) return;
     this.#jobs = this.#readJobsSync();
   }
 

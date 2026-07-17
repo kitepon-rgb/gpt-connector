@@ -136,6 +136,10 @@ export function imageResolutionMatches(
     && (requestedEffort === undefined || resolvedEffort === requestedEffort);
 }
 
+// 画像生成は通常Chatより長くかかり、実測で180秒直後にdownloadが揃うことがある。
+// callerの短いoperationTimeoutMsでも、画像だけは生成済み結果を捨てない待機幅を確保する。
+export const imageOperationTimeoutMs = 360_000;
+
 const uploadHandleSchema = z.object({ uploadHandle: z.string().uuid() });
 const uploadChunkResultSchema = z.object({ receivedBytes: z.number().int().nonnegative() });
 const uploadResultSchema = z.object({
@@ -535,7 +539,7 @@ export class GptConnector {
       keepOpen: false,
       attachmentHandles: [],
       imageMode: true,
-    }]);
+    }], Math.max(this.#operationTimeoutMs, imageOperationTimeoutMs));
     const result = bridgeImageResultSchema.safeParse(raw);
     if (result.success) {
       if (imageResolutionMatches(
@@ -567,7 +571,7 @@ export class GptConnector {
       }
       throw new ConnectorError(
         "MODEL_RESOLUTION_MISMATCH",
-        "画像生成のresolved modelまたはeffortがrequested selectionと一致しませんでした。",
+        `画像生成のresolved modelまたはeffortがrequested selectionと一致しませんでした。 requestedModel=${parsed.model} resolvedModel=${result.data.resolvedModel ?? "null"} requestedEffort=${parsed.effort ?? "null"} resolvedEffort=${result.data.resolvedEffort ?? "null"}`,
         {
           requestedModel: parsed.model,
           resolvedModel: result.data.resolvedModel,
@@ -1032,6 +1036,7 @@ export class GptConnector {
   async #runOperation(
     method: "startModels" | "startUpload" | "startChat" | "startClose",
     args: readonly unknown[],
+    timeoutMs = this.#operationTimeoutMs,
   ): Promise<unknown> {
     const started = operationStartSchema.parse(
       await evaluateByValue<unknown>(
@@ -1041,7 +1046,7 @@ export class GptConnector {
       ),
     );
 
-    const deadline = Date.now() + this.#operationTimeoutMs;
+    const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const envelope = operationEnvelopeSchema.parse(
         await evaluateByValue<unknown>(
@@ -1070,7 +1075,7 @@ export class GptConnector {
     throw new ConnectorError(
       method === "startUpload" ? "UPLOAD_TIMEOUT" : "CHAT_FAILED",
       "ChatGPT runtime operationがtimeoutしました。",
-      { method },
+      { method, timeoutMs },
     );
   }
 

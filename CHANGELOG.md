@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.3 — 2026-07-18
+
+- dead writerの非terminal jobをread-only `sessions`が`JOB_RECOVERY_UNAVAILABLE`へ回収した後、
+  `get()`の台帳再読込でraw stateへ巻き戻す問題を修正した。read-only回収は台帳を書き換えない。
+
+## 0.4.2 — 2026-07-18
+
+- 画像生成の`MODEL_RESOLUTION_MISMATCH`へrequested／resolved model・effortを含め、失敗jobを
+  `sessions`で回収した時に安全な選択metadataまで診断できるようにした。promptや画像情報は記録しない。
+
+## 0.4.1 — 2026-07-18
+
+- 画像生成だけruntime operation待機上限を180秒から360秒へ延長し、生成画像のdownloadが揃った直後に
+  connector側timeoutが先に発火して結果を失う問題を修正した。通常Chatとuploadの上限は変更しない。
+
 ## 0.4.0 — 2026-07-17
 
 - ChatGPT通常枠の画像生成を正式機能化し、CLI `image` とMCP `chatgpt_image` を追加した。

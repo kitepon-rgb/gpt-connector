@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { imageResolutionMatches } from "../src/connector.js";
+import { imageOperationTimeoutMs, imageResolutionMatches } from "../src/connector.js";
+
+test("画像生成は通常Chatの180秒を越えて待てる", () => {
+  assert.equal(imageOperationTimeoutMs, 360_000);
+});
 
 test("画像生成はrequested model/effortとresolved値の完全一致だけを受け入れる", () => {
   assert.equal(imageResolutionMatches("gpt-5-6-thinking", "min", "gpt-5-6-thinking", "min"), true);
