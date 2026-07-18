@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.5 — 2026-07-19
+
+- 長寿命MCP processのCDP clientが無応答になった後も永久にcacheされ、`consult`の事前model確認と
+  `diagnostics`が以後すべてtimeoutする問題を修正した。`CDP_UNAVAILABLE`を返したclientだけを退役し、
+  失敗した操作は自動再送せず、次回のtool呼出しで専用Chromeへfresh接続する。
+
 ## 0.4.4 — 2026-07-18
 
 - 画像生成turnがChatGPT内部sender promise未解決のままruntime timeoutする問題を修正した。

@@ -29,25 +29,56 @@ interface ConnectorPort {
   shutdown(): Promise<void>;
 }
 
+type ConnectorFactory = () => Promise<ConnectorPort>;
+
 export class LazyConnectorHost {
   readonly #endpoint: string;
   readonly #stateDirectory: string | undefined;
+  readonly #connect: ConnectorFactory;
   #connectorPromise: Promise<ConnectorPort> | null = null;
 
-  constructor(endpoint = "http://127.0.0.1:9223", stateDirectory?: string) {
+  constructor(
+    endpoint = "http://127.0.0.1:9223",
+    stateDirectory?: string,
+    connect?: ConnectorFactory,
+  ) {
     this.#endpoint = endpoint;
     this.#stateDirectory = stateDirectory;
+    this.#connect = connect ?? (() => GptConnector.connect({
+      endpoint: this.#endpoint,
+      stateDirectory: this.#stateDirectory,
+    }));
   }
 
   get(): Promise<ConnectorPort> {
-    this.#connectorPromise ??= GptConnector.connect({
-      endpoint: this.#endpoint,
-      stateDirectory: this.#stateDirectory,
-    }).catch((error) => {
+    this.#connectorPromise ??= this.#connect().catch((error) => {
       this.#connectorPromise = null;
       throw error;
     });
     return this.#connectorPromise;
+  }
+
+  async run<T>(action: (connector: ConnectorPort) => Promise<T>): Promise<T> {
+    const connectorPromise = this.get();
+    let connector: ConnectorPort | undefined;
+    try {
+      connector = await connectorPromise;
+      return await action(connector);
+    } catch (error) {
+      if (
+        error instanceof ConnectorError &&
+        error.code === "CDP_UNAVAILABLE" &&
+        this.#connectorPromise === connectorPromise
+      ) {
+        this.#connectorPromise = null;
+        try {
+          connector?.close();
+        } catch {
+          // 壊れたtransportの退役失敗で、元のCDP errorを置き換えない。
+        }
+      }
+      throw error;
+    }
   }
 
   async shutdown(): Promise<void> {
@@ -111,7 +142,7 @@ export function createGptConnectorMcpServer(host: LazyConnectorHost): McpServer 
         idempotentHint: true,
       },
     },
-    async () => toolResult(async () => (await host.get()).models()),
+    async () => toolResult(async () => host.run((connector) => connector.models())),
   );
 
   server.registerTool(
@@ -135,7 +166,7 @@ export function createGptConnectorMcpServer(host: LazyConnectorHost): McpServer 
         idempotentHint: false,
       },
     },
-    async (input) => toolResult(async () => (await host.get()).chat(input)),
+    async (input) => toolResult(async () => host.run((connector) => connector.chat(input))),
   );
 
   server.registerTool(
@@ -151,7 +182,7 @@ export function createGptConnectorMcpServer(host: LazyConnectorHost): McpServer 
         idempotentHint: true,
       },
     },
-    async (input) => toolResult(async () => (await host.get()).image(input)),
+    async (input) => toolResult(async () => host.run((connector) => connector.image(input))),
   );
 
   server.registerTool(
@@ -167,7 +198,7 @@ export function createGptConnectorMcpServer(host: LazyConnectorHost): McpServer 
         idempotentHint: true,
       },
     },
-    async (input) => toolResult(async () => (await host.get()).consult(input)),
+    async (input) => toolResult(async () => host.run((connector) => connector.consult(input))),
   );
 
   server.registerTool(
@@ -197,7 +228,7 @@ export function createGptConnectorMcpServer(host: LazyConnectorHost): McpServer 
         idempotentHint: true,
       },
     },
-    async () => toolResult(async () => (await host.get()).diagnostics()),
+    async () => toolResult(async () => host.run((connector) => connector.diagnostics())),
   );
 
   server.registerTool(
@@ -212,7 +243,7 @@ export function createGptConnectorMcpServer(host: LazyConnectorHost): McpServer 
         idempotentHint: false,
       },
     },
-    async (input) => toolResult(async () => (await host.get()).closeSession(input)),
+    async (input) => toolResult(async () => host.run((connector) => connector.closeSession(input))),
   );
 
   return server;
