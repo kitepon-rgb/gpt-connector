@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.7 — 2026-07-20
+
+- `npm pack` 前にcheckとbuildを必ず実行する `prepack` gateを追加した。0.4.6はsource更新後の
+  `dist` 再生成がtarballへ反映されず、CLI実体が0.4.5のままだったため、0.4.7で修正版distを再公開する。
+
 ## 0.4.6 — 2026-07-20
 
 - `browser start` の短いCDP probe timeoutから既存endpoint所有者検査とWindowServer可視性収束待ちを

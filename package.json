@@ -1,6 +1,6 @@
 {
   "name": "gpt-connector",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "description": "UIに依存せず、ログイン済みChatGPT Web runtimeの通常Chatと画像生成をCodexから呼び出すローカルconnector",
   "license": "MIT",
   "author": "kitepon-rgb",
@@ -42,6 +42,7 @@
     "lint": "eslint .",
     "test": "tsx --test test/*.test.ts",
     "check": "pnpm lint && pnpm typecheck && pnpm test",
+    "prepack": "pnpm check && pnpm build",
     "prepublishOnly": "pnpm check && pnpm build"
   },
   "publishConfig": {
