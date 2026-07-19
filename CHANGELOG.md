@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.6 — 2026-07-20
+
+- `browser start` の短いCDP probe timeoutから既存endpoint所有者検査とWindowServer可視性収束待ちを
+  分離し、起動境界で間欠的に出ていた `RUNTIME_DRIFT` / `CDP_UNAVAILABLE` を防いだ。
+  profile・所有PIDの照合条件と最終 fail-closed 判定は維持する。
+
 ## 0.4.5 — 2026-07-19
 
 - 長寿命MCP processのCDP clientが無応答になった後も永久にcacheされ、`consult`の事前model確認と

@@ -45,6 +45,8 @@ interface BrowserOptions {
   readonly probeTimeoutMs?: number;
   readonly appProbeTimeoutMs?: number;
   readonly readyDeadlineMs?: number;
+  readonly ownershipProbeGraceMs?: number;
+  readonly windowVisibilityGraceMs?: number;
 }
 
 const endpoint = "http://127.0.0.1:9223" as const;
@@ -52,6 +54,8 @@ const chatGptUrl = "https://chatgpt.com/";
 const probeTimeoutMs = 500;
 const appProbeTimeoutMs = 3_000;
 const readyDeadlineMs = 15_000;
+const ownershipProbeGraceMs = 3_000;
+const windowVisibilityGraceMs = 5_000;
 const lockWaitMarginMs = 1_000;
 const execFile = promisify(execFileCallback);
 let inFlight: Promise<BrowserLaunchResult> | undefined;
@@ -110,6 +114,8 @@ async function startBrowserLocked(options: BrowserOptions, profile: string): Pro
   const timeout = options.probeTimeoutMs ?? probeTimeoutMs;
   const appTimeout = options.appProbeTimeoutMs ?? appProbeTimeoutMs;
   const deadline = options.readyDeadlineMs ?? readyDeadlineMs;
+  const ownershipGrace = options.ownershipProbeGraceMs ?? ownershipProbeGraceMs;
+  const visibilityGrace = options.windowVisibilityGraceMs ?? windowVisibilityGraceMs;
   const fetcher = timedFetch(options.fetch ?? globalThis.fetch, timeout);
   const endpointReady = options.endpointReady ?? (() => endpointIsReady(fetcher));
   const processInspector = options.processInspector ?? inspectListenerProcesses;
@@ -123,14 +129,15 @@ async function startBrowserLocked(options: BrowserOptions, profile: string): Pro
   const processRevealer = options.processRevealer ?? revealProcess;
   const visibilityVerifier = options.windowVisibilityVerifier ?? verifyWindowVisibility;
   const processActivator = options.processActivator ?? activateProcess;
-  const authShow = () => showOwnedWindow(profile, processInspector, windowShower, processRevealer, processActivator, visibilityVerifier, Math.max(1, readyDeadline - Date.now()), "認証復帰のため専用Chrome windowを表示できませんでした。", "AUTH_REQUIRED");
   const sleep = options.sleep ?? ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
   const readyDeadline = Date.now() + deadline;
+  const visibilityTimeout = () => Math.max(visibilityGrace, Math.max(1, readyDeadline - Date.now()));
+  const authShow = () => showOwnedWindow(profile, processInspector, windowShower, processRevealer, processActivator, visibilityVerifier, visibilityTimeout(), "認証復帰のため専用Chrome windowを表示できませんでした。", "AUTH_REQUIRED");
 
   const endpointExists = await bounded(endpointReady(), timeout, "CDP endpoint確認がtimeoutしました")
     .catch((error: unknown) => { throw launcherError("CDP_UNAVAILABLE", "CDP endpointを確認できませんでした。", error); });
   if (endpointExists) {
-    const owned = await bounded(ownershipReady(), timeout, "既存CDP endpointの所有確認がtimeoutしました")
+    const owned = await bounded(ownershipReady(), Math.max(timeout, ownershipGrace), "既存CDP endpointの所有確認がtimeoutしました")
       .catch((error: unknown) => { throw launcherError("CDP_UNAVAILABLE", "既存CDP endpointの所有者を確認できませんでした。", error); });
     if (!owned) {
       throw new ConnectorError("RUNTIME_DRIFT", "9223番ポートはgpt-connector専用profileのChromeが所有していません（ポート衝突）。");
@@ -138,11 +145,11 @@ async function startBrowserLocked(options: BrowserOptions, profile: string): Pro
     if (await existingTargetAbsent()) {
       await createAndVerifyMinimizedTarget(coldTargetCreator, coldWindowVerifier);
       const pid = await revealOwnedProcess(profile, processInspector, processRevealer, Math.max(1, readyDeadline - Date.now()));
-      const result = await waitForReadyWithAuthRecovery(appReady, sleep, appTimeout, Math.max(1, readyDeadline - Date.now()), authShow, "already_ready"); await visibilityVerifier(await stableOwnedListenerPid(profile, processInspector, pid), false, Math.max(1, readyDeadline - Date.now())); return result;
+      const result = await waitForReadyWithAuthRecovery(appReady, sleep, appTimeout, Math.max(1, readyDeadline - Date.now()), authShow, "already_ready"); await visibilityVerifier(await stableOwnedListenerPid(profile, processInspector, pid), false, visibilityTimeout()); return result;
     }
     await minimizeReadyWindow(windowMinimizer);
     const pid = await revealOwnedProcess(profile, processInspector, processRevealer, Math.max(1, readyDeadline - Date.now()));
-    const result = await waitForReadyWithAuthRecovery(appReady, sleep, appTimeout, Math.max(1, readyDeadline - Date.now()), authShow, "already_ready"); await visibilityVerifier(await stableOwnedListenerPid(profile, processInspector, pid), false, Math.max(1, readyDeadline - Date.now())); return result;
+    const result = await waitForReadyWithAuthRecovery(appReady, sleep, appTimeout, Math.max(1, readyDeadline - Date.now()), authShow, "already_ready"); await visibilityVerifier(await stableOwnedListenerPid(profile, processInspector, pid), false, visibilityTimeout()); return result;
   }
 
   const args = ["-j", "-g", "-n", "-a", "Google Chrome", "--args", "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=9223", `--user-data-dir=${profile}`, "--no-startup-window", "--no-first-run", "--no-default-browser-check"];
@@ -153,7 +160,7 @@ async function startBrowserLocked(options: BrowserOptions, profile: string): Pro
   }
   await createAndVerifyMinimizedTarget(coldTargetCreator, coldWindowVerifier);
   const pid = await revealOwnedProcess(profile, processInspector, processRevealer, Math.max(1, readyDeadline - Date.now()));
-  const result = await waitForReadyWithAuthRecovery(appReady, sleep, appTimeout, Math.max(1, readyDeadline - Date.now()), authShow, "started"); await visibilityVerifier(await stableOwnedListenerPid(profile, processInspector, pid), false, Math.max(1, readyDeadline - Date.now())); return result;
+  const result = await waitForReadyWithAuthRecovery(appReady, sleep, appTimeout, Math.max(1, readyDeadline - Date.now()), authShow, "started"); await visibilityVerifier(await stableOwnedListenerPid(profile, processInspector, pid), false, visibilityTimeout()); return result;
 }
 
 async function createAndVerifyMinimizedTarget(create: ColdTargetCreator, verify: ColdWindowVerifier): Promise<void> { try { const targetId = await create(); if (targetId.length === 0) throw new Error("CDP targetIdが不正です"); if (await verify(targetId) !== "minimized") throw new Error("CDP windowStateがminimizedではありません"); } catch (error) { throw browserWindowError("専用Chromeの最小化ChatGPT targetを作成できませんでした。", error); } }
