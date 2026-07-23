@@ -24,11 +24,13 @@ const bridgeBootstrapSource = String.raw`async function(coreUrl, conversationUrl
   };
 
   const sender = unique("sender", entries(core).filter(([, value]) => {
-    if (typeof value !== "function") return false;
+    if (typeof value !== "function" || value.length !== 1) return false;
     const source = functionSource(value);
-    return source.includes("completion.submit.request.tpp_model_resolution") &&
-      source.includes("sendRequest({conduitToken") &&
-      source.includes("requestedModelId");
+    return source.startsWith("async function") &&
+      source.includes("prepareState") &&
+      source.includes("lastPrepareParentMessageId") &&
+      source.includes("lastCompletionFinishedTimestamp") &&
+      source.includes("prepareRequestBlocked");
   }));
 
   const builder = unique("builder", entries(conversationModule).filter(([, value]) => {

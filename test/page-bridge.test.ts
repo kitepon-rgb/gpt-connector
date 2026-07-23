@@ -18,6 +18,9 @@ test("bridgeはDOM selector・event・fiberを利用しない", () => {
   assert.doesNotMatch(expression, /querySelector|__reactFiber|\.click\(|dispatchEvent/u);
   assert.match(expression, /conversationFactory/u);
   assert.match(expression, /requestedModelId/u);
+  assert.match(expression, /lastPrepareParentMessageId/u);
+  assert.match(expression, /lastCompletionFinishedTimestamp/u);
+  assert.match(expression, /prepareRequestBlocked/u);
   assert.match(expression, /sessionCount/u);
   assert.match(expression, new RegExp(bridgeBuildId, "u"));
   assert.doesNotThrow(() => new Function(expression));

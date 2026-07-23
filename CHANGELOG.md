@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.8 — 2026-07-23
+
+- Chrome 150がCDPの`minimized`要求へ成功応答しながら実状態を`maximized`のまま維持する場合でも、
+  専用PIDのAppKit `hidden`状態とWindowServer表示window 0件を正本にして`browser start`を成立させる。
+  target/windowの存在、公式origin、認証、page bridgeは引き続きfail-closedで検証する。
+- `browser show`のendpoint所有者確認を500ms probeから専用graceへ分離した。
+- ChatGPT現行bundleで公式送信関数の内部構造が変わったため、minified識別マーカーを更新した。
+  live model catalog取得まで実機確認済み。
+
 ## 0.4.7 — 2026-07-20
 
 - `npm pack` 前にcheckとbuildを必ず実行する `prepack` gateを追加した。0.4.6はsource更新後の
